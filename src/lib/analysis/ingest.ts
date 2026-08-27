@@ -38,11 +38,12 @@ export interface IngestProgress {
 
 type ProgressCb = (p: IngestProgress) => void;
 
+/** Returns the ids of successfully ingested photos (duplicates skipped). */
 export async function ingestFiles(
   reelId: string,
   files: File[],
   onProgress?: ProgressCb,
-): Promise<void> {
+): Promise<string[]> {
   const existingCount = await db.photos.where('reelId').equals(reelId).count();
   const progress: IngestProgress = {
     total: files.length,
@@ -57,12 +58,14 @@ export async function ingestFiles(
 
   let index = 0;
   const queue = files.map((file, i) => ({ file, order: existingCount + i }));
+  const ingestedIds: string[] = [];
 
   const worker = async () => {
     while (index < queue.length) {
       const item = queue[index++];
       try {
-        await ingestOne(reelId, item.file, item.order, referenceSets);
+        const id = await ingestOne(reelId, item.file, item.order, referenceSets);
+        if (id) ingestedIds.push(id);
       } catch (err) {
         progress.failed++;
         console.error('Failed to ingest', item.file.name, err);
@@ -74,6 +77,7 @@ export async function ingestFiles(
 
   await Promise.all(Array.from({ length: Math.min(CONCURRENCY, queue.length) }, worker));
   await trackUsage('analysis', `${files.length} photos`);
+  return ingestedIds;
 }
 
 async function ingestOne(
@@ -81,7 +85,7 @@ async function ingestOne(
   file: File,
   order: number,
   referenceSets: Awaited<ReturnType<typeof loadActiveReferenceSets>>,
-): Promise<void> {
+): Promise<string | null> {
   const id = uid();
   const record: PhotoRecord = {
     id,
@@ -117,7 +121,7 @@ async function ingestOne(
     if (twin) {
       await db.photos.delete(id);
       await db.blobs.delete(blobKey.original(id));
-      return;
+      return null;
     }
 
     // 2. Decode + derivatives.
@@ -189,6 +193,7 @@ async function ingestOne(
     bitmap.close();
     record.status = 'ready';
     await db.photos.put({ ...record });
+    return id;
   } catch (err) {
     record.status = 'error';
     record.error = err instanceof Error ? err.message : String(err);

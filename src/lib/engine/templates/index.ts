@@ -8,7 +8,7 @@ import type { TemplateContext } from './shared';
 import { buildSignatureEnergy } from './signatureEnergy';
 import { buildCinematicStory } from './cinematicStory';
 import { buildQuickCut } from './quickCut';
-import { buildRapidFire } from './rapidFire';
+import { buildRapidFire, rapidFireCapacity } from './rapidFire';
 import { buildEditorialMinimal } from './editorialMinimal';
 import { buildPhotoStory } from './photoStory';
 
@@ -18,12 +18,24 @@ export interface TemplateDefinition {
   description: string;
   pace: string;
   idealFor: string;
+  /** Shortest slide this style allows — sets its photo capacity. */
+  minSlideMs: number;
+  /** Typical photos the style chooses on its own, per second of reel. */
+  idealPerSecond: number;
   build: (photos: SequencePhoto[], ctx: TemplateContext) => Timeline;
+}
+
+/** Most photos this template can show in a reel of the given length. */
+export function templateCapacity(template: TemplateDefinition, durationMs: number): number {
+  if (template.id === 'rapid-fire') return rapidFireCapacity(durationMs);
+  return Math.max(3, Math.floor(durationMs / template.minSlideMs));
 }
 
 export const TEMPLATES: TemplateDefinition[] = [
   {
     id: 'signature-energy',
+    minSlideMs: 900,
+    idealPerSecond: 0.59,
     name: 'Signature Energy',
     description: 'Fast, upbeat and polished — your photography stays the hero.',
     pace: '~1.5–2s per photo',
@@ -32,6 +44,8 @@ export const TEMPLATES: TemplateDefinition[] = [
   },
   {
     id: 'cinematic-story',
+    minSlideMs: 1600,
+    idealPerSecond: 0.38,
     name: 'Cinematic Story',
     description: 'Slower and more emotional, with soft transitions and room for a sentence.',
     pace: '~2.5–3s per photo',
@@ -40,6 +54,8 @@ export const TEMPLATES: TemplateDefinition[] = [
   },
   {
     id: 'quick-cut',
+    minSlideMs: 450,
+    idealPerSecond: 0.95,
     name: 'Quick Cut',
     description: 'Rapid, beat-driven cuts with occasional stacked compositions.',
     pace: '~1s per photo',
@@ -48,6 +64,8 @@ export const TEMPLATES: TemplateDefinition[] = [
   },
   {
     id: 'rapid-fire',
+    minSlideMs: 120,
+    idealPerSecond: 5.0,
     name: 'Rapid Fire',
     description: 'Blink-and-you-miss-it — your whole set in quick hits, under half a second each.',
     pace: '~0.15–0.5s per photo',
@@ -56,6 +74,8 @@ export const TEMPLATES: TemplateDefinition[] = [
   },
   {
     id: 'editorial-minimal',
+    minSlideMs: 1400,
+    idealPerSecond: 0.45,
     name: 'Editorial Minimal',
     description: 'Clean and deliberate, with gallery framing and elegant type.',
     pace: '~2–2.5s per photo',
@@ -64,6 +84,8 @@ export const TEMPLATES: TemplateDefinition[] = [
   },
   {
     id: 'photo-story',
+    minSlideMs: 900,
+    idealPerSecond: 0.53,
     name: 'Photo Story',
     description: 'Arranges your set into a little narrative, from opening scene to final embrace.',
     pace: '~2s per photo',

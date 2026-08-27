@@ -18,7 +18,7 @@ import {
 
 export function buildPhotoStory(photos: SequencePhoto[], ctx: TemplateContext): Timeline {
   const count = photoCountFor(ctx.durationMs, 1.9, photos.length, 4);
-  const sequence = sequenceFor(photos, count, ctx, () => arrangeStory(photos, count, ctx.seed));
+  const sequence = sequenceFor(photos, count, ctx, () => arrangeStory(photos, count, ctx.seed), 900);
 
   // Establishing and closing images breathe; details move quicker.
   const weights = sequence.map((p, i) => {

@@ -21,7 +21,7 @@ export function buildCinematicStory(
   ctx: TemplateContext,
 ): Timeline {
   const count = photoCountFor(ctx.durationMs, 2.6, photos.length, 3);
-  const sequence = sequenceFor(photos, count, ctx, () => arrangePhotos(photos, count, ctx.seed));
+  const sequence = sequenceFor(photos, count, ctx, () => arrangePhotos(photos, count, ctx.seed), 1600);
 
   // Even, unhurried pacing with a longer final hold.
   const weights = sequence.map((_, i) => (i === sequence.length - 1 ? 1.35 : 1));

@@ -61,8 +61,10 @@ export function buildTimeline(opts: BuildOptions): Timeline {
   let fixedOrder = false;
   if (reel.manualOrder && reel.manualOrder.length > 0) {
     const orderIndex = new Map(reel.manualOrder.map((id, i) => [id, i]));
+    // Photos not yet in the manual list (e.g. just uploaded) go to the end.
+    const fallback = orderIndex.size;
     sequencePhotos = [...sequencePhotos].sort(
-      (a, b) => (orderIndex.get(a.id) ?? 999) - (orderIndex.get(b.id) ?? 999),
+      (a, b) => (orderIndex.get(a.id) ?? fallback) - (orderIndex.get(b.id) ?? fallback),
     );
     fixedOrder = true;
   }

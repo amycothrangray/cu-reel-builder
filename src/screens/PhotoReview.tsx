@@ -9,7 +9,8 @@ import { canvasToBlob } from '../lib/imaging/decode';
 import { matchConfidenceLabel } from '../lib/restricted/matching';
 import { ingestFiles } from '../lib/analysis/ingest';
 import { enrichWithAi } from '../lib/analysis/aiVision';
-import { rebuildActiveVersion } from '../lib/reels';
+import { addPhotosToArrangement, rebuildActiveVersion, removePhotosFromArrangement } from '../lib/reels';
+import { getTemplate, templateCapacity } from '../lib/engine/templates';
 import { useBlobUrl, invalidateBlobUrl } from '../components/hooks';
 import { Modal } from '../components/Modal';
 import { CropEditor } from '../components/CropEditor';
@@ -83,10 +84,17 @@ function PhotoCell({
 
 function DetailModal({
   photo,
+  reelPosition,
+  onAddToReel,
+  onRemoveFromReel,
   onClose,
   onChanged,
 }: {
   photo: PhotoRecord;
+  /** Position in the current arrangement, if the photo is in it. */
+  reelPosition?: number;
+  onAddToReel: () => void;
+  onRemoveFromReel: () => void;
   onClose: () => void;
   /** Called after any change that affects the reel arrangement. */
   onChanged: () => void;
@@ -324,14 +332,18 @@ function DetailModal({
       ) : null}
 
       <div className="row" style={{ marginTop: 16 }}>
-        <label className="row" style={{ gap: 6, fontSize: 14 }}>
-          <input
-            type="checkbox"
-            checked={photo.included}
-            onChange={(e) => void db.photos.update(photo.id, { included: e.target.checked }).then(onChanged)}
-          />
-          Include in reel
-        </label>
+        {reelPosition !== undefined ? (
+          <>
+            <span className="faint">In the reel — position {reelPosition + 1}</span>
+            <button className="btn btn-secondary btn-sm" onClick={onRemoveFromReel}>
+              Remove from reel
+            </button>
+          </>
+        ) : (
+          <button className="btn btn-primary btn-sm" onClick={onAddToReel}>
+            Add to reel
+          </button>
+        )}
         <div className="spacer" />
         <button
           className="btn btn-ghost btn-sm"
@@ -358,6 +370,7 @@ function DetailModal({
 export function PhotoReviewScreen() {
   const { reelId } = useParams<{ reelId: string }>();
   const navigate = useNavigate();
+  const show = useToasts((s) => s.show);
   const addInputRef = useRef<HTMLInputElement>(null);
   const [openPhotoId, setOpenPhotoId] = useState<string | null>(null);
   const [selecting, setSelecting] = useState(false);
@@ -407,8 +420,26 @@ export function PhotoReviewScreen() {
   const openPhoto = photos.find((p) => p.id === openPhotoId);
   const inReelCount = inReelIndex.size;
 
+  const template = reel.templateId ? getTemplate(reel.templateId) : null;
+  const capacity = template ? templateCapacity(template, reel.durationSec * 1000) : null;
+
   const refreshArrangement = () => {
     if (reelId) void rebuildActiveVersion(reelId);
+  };
+
+  const addToReel = async (ids: string[]) => {
+    if (!reelId) return;
+    await addPhotosToArrangement(reelId, ids);
+    if (capacity !== null && inReelCount + ids.length > capacity) {
+      show(
+        `This style fits ${capacity} photos at ${reel.durationSec}s — some may not appear until you pick a longer length or a faster style.`,
+      );
+    }
+  };
+
+  const removeFromReel = async (ids: string[]) => {
+    if (!reelId) return;
+    await removePhotosFromArrangement(reelId, ids);
   };
 
   const bulk = async (fn: (p: PhotoRecord) => Partial<PhotoRecord>) => {
@@ -421,6 +452,14 @@ export function PhotoReviewScreen() {
     refreshArrangement();
   };
 
+  const bulkReel = async (include: boolean) => {
+    const ids = [...selected];
+    setSelected(new Set());
+    setSelecting(false);
+    if (include) await addToReel(ids);
+    else await removeFromReel(ids);
+  };
+
   return (
     <div>
       <div className="page-header">
@@ -428,7 +467,9 @@ export function PhotoReviewScreen() {
           <h1>{reel.name}</h1>
           <p className="muted" style={{ marginTop: 4 }}>
             {ready.length} photos
-            {inReelCount > 0 ? ` · ${inReelCount} in the current reel` : ''}
+            {inReelCount > 0
+              ? ` · ${inReelCount} in the current reel${capacity !== null ? ` (fits up to ${capacity} at ${reel.durationSec}s)` : ''}`
+              : ''}
             {analyzing ? ' · still looking through a few…' : ''}
             {flaggedCount > 0 ? ` · ${flaggedCount} need review` : ''}
           </p>
@@ -473,11 +514,11 @@ export function PhotoReviewScreen() {
             {selected.size} selected
           </span>
           <div className="spacer" />
-          <button className="btn btn-secondary btn-sm" onClick={() => void bulk(() => ({ included: true }))}>
-            Include
+          <button className="btn btn-secondary btn-sm" onClick={() => void bulkReel(true)}>
+            Add to reel
           </button>
-          <button className="btn btn-secondary btn-sm" onClick={() => void bulk(() => ({ included: false }))}>
-            Exclude
+          <button className="btn btn-secondary btn-sm" onClick={() => void bulkReel(false)}>
+            Remove from reel
           </button>
           <button
             className="btn btn-secondary btn-sm"
@@ -556,9 +597,10 @@ export function PhotoReviewScreen() {
         hidden
         onChange={(e) => {
           if (e.target.files?.length && reelId) {
-            void ingestFiles(reelId, Array.from(e.target.files)).then(() => {
+            void ingestFiles(reelId, Array.from(e.target.files)).then((newIds) => {
               void enrichWithAi(reelId);
-              refreshArrangement();
+              // New uploads go straight into the current arrangement.
+              if (newIds.length > 0) void addToReel(newIds);
             });
           }
         }}
@@ -567,6 +609,9 @@ export function PhotoReviewScreen() {
       {openPhoto && (
         <DetailModal
           photo={openPhoto}
+          reelPosition={inReelIndex.get(openPhoto.id)}
+          onAddToReel={() => void addToReel([openPhoto.id])}
+          onRemoveFromReel={() => void removeFromReel([openPhoto.id])}
           onClose={() => setOpenPhotoId(null)}
           onChanged={refreshArrangement}
         />

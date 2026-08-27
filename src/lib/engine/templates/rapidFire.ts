@@ -29,8 +29,12 @@ export function rapidFireCapacity(durationMs: number): number {
 export function buildRapidFire(photos: SequencePhoto[], ctx: TemplateContext): Timeline {
   const capacity = rapidFireCapacity(ctx.durationMs);
   const count = Math.max(3, Math.min(photos.length, capacity));
-  const sequence = sequenceFor(photos, count, ctx, () =>
-    arrangePhotos(photos, count, ctx.seed),
+  const sequence = sequenceFor(
+    photos,
+    count,
+    ctx,
+    () => arrangePhotos(photos, count, ctx.seed),
+    RAPID_MIN_SLIDE_MS,
   );
 
   // Opener and closer hold long enough to read; everything else is a flash.

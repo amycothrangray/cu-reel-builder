@@ -2,11 +2,17 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { blobKey, db } from '../lib/db';
-import { getBrand, generateVersion, rebuildActiveVersion, touchReel, addMusicTrack } from '../lib/reels';
+import {
+  getBrand,
+  generateVersion,
+  rebuildActiveVersion,
+  removePhotosFromArrangement,
+  touchReel,
+  addMusicTrack,
+} from '../lib/reels';
 import { loadResources, type LoadedResources } from '../lib/engine/resources';
 import { ReelPlayer } from '../lib/engine/preview';
-import { TEMPLATES } from '../lib/engine/templates';
-import { rapidFireCapacity } from '../lib/engine/templates/rapidFire';
+import { TEMPLATES, getTemplate, templateCapacity } from '../lib/engine/templates';
 import { useBlobUrl } from '../components/hooks';
 import { useToasts } from '../components/toast';
 import type { ReelDuration, ReelRecord, TemplateId } from '../lib/types';
@@ -293,7 +299,7 @@ export function EditorScreen() {
                   count={stripPhotoIds.length}
                   onMove={movePhoto}
                   onRemove={() => {
-                    void db.photos.update(id, { included: false }).then(() => rebuildActiveVersion(reel.id));
+                    void removePhotosFromArrangement(reel.id, [id]);
                   }}
                 />
               ))}
@@ -391,10 +397,21 @@ export function EditorScreen() {
                   </button>
                 ))}
               </div>
-              {reel.templateId === 'rapid-fire' && (
+              {reel.templateId && (
                 <span className="hint">
-                  Rapid Fire fits up to {rapidFireCapacity(reel.durationSec * 1000)} photos at{' '}
-                  {reel.durationSec}s — pick 15s for the biggest sets.
+                  {(() => {
+                    const cap = templateCapacity(getTemplate(reel.templateId), reel.durationSec * 1000);
+                    const wanted = reel.manualOrder
+                      ? reel.manualOrder.length
+                      : stripPhotoIds.length;
+                    const cut = Math.max(0, Math.min(wanted, photos.filter((p) => p.included).length) - stripPhotoIds.length);
+                    return (
+                      `Showing ${stripPhotoIds.length} photos — this style fits up to ${cap} at ${reel.durationSec}s.` +
+                      (cut > 0
+                        ? ` ${cut} more don’t fit; pick a longer length or a faster style like Rapid Fire.`
+                        : '')
+                    );
+                  })()}
                 </span>
               )}
             </div>

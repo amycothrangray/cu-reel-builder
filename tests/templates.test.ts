@@ -112,6 +112,21 @@ describe('reel template timing', () => {
     expect(t.overlays.some((o) => o.kind === 'handle')).toBe(true);
   });
 
+  it('a manual list uses ALL its photos, past the ideal count, up to physical capacity', () => {
+    // Signature Energy would pick ~5 photos at 9s on its own; a user-curated
+    // list of 8 must show all 8 (capacity at 900ms min is 10).
+    const photos = photoSet(8);
+    const t = TEMPLATES[0].build(photos, ctx({ fixedOrder: true, durationMs: 9000 }));
+    const used = new Set(t.clips.flatMap((c) => c.layers.map((l) => l.photoId)));
+    expect(used.size).toBe(8);
+    // But a 20-photo list at 9s is capped at what 900ms slides allow.
+    const many = photoSet(20);
+    const t2 = TEMPLATES[0].build(many, ctx({ fixedOrder: true, durationMs: 9000 }));
+    const used2 = new Set(t2.clips.flatMap((c) => c.layers.map((l) => l.photoId)));
+    expect(used2.size).toBe(10);
+    for (const clip of t2.clips) expect(clip.endMs - clip.startMs).toBeGreaterThanOrEqual(899);
+  });
+
   it('respects a manual fixed order', () => {
     const photos = photoSet(6);
     const t = TEMPLATES[0].build(photos, ctx({ fixedOrder: true, durationMs: 12000 }));

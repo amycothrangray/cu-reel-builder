@@ -19,7 +19,7 @@ import {
 export function buildQuickCut(photos: SequencePhoto[], ctx: TemplateContext): Timeline {
   const rand = mulberry32(ctx.seed);
   const count = photoCountFor(ctx.durationMs, 1.05, photos.length, 4);
-  const sequence = sequenceFor(photos, count, ctx, () => arrangePhotos(photos, count, ctx.seed));
+  const sequence = sequenceFor(photos, count, ctx, () => arrangePhotos(photos, count, ctx.seed), 450);
 
   // Group horizontal neighbours into stacked pairs occasionally.
   const slots: SequencePhoto[][] = [];

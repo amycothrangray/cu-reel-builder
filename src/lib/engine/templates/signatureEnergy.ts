@@ -22,7 +22,7 @@ export function buildSignatureEnergy(
 ): Timeline {
   const rand = mulberry32(ctx.seed);
   const count = photoCountFor(ctx.durationMs, 1.7, photos.length);
-  const sequence = sequenceFor(photos, count, ctx, () => arrangePhotos(photos, count, ctx.seed));
+  const sequence = sequenceFor(photos, count, ctx, () => arrangePhotos(photos, count, ctx.seed), 900);
 
   // The opener holds a touch longer to land the hook; the closer breathes.
   const weights = sequence.map((_, i) =>

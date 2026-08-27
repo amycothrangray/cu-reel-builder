@@ -120,6 +120,50 @@ export async function rebuildActiveVersion(reelId: string): Promise<void> {
   await db.reels.update(reelId, { versions, updatedAt: Date.now() });
 }
 
+/** Photo order as the given timeline plays it (stacked layers flattened). */
+export function stripOrder(timeline: Timeline): string[] {
+  const ids: string[] = [];
+  for (const clip of timeline.clips) {
+    for (const layer of clip.layers) {
+      if (!ids.includes(layer.photoId)) ids.push(layer.photoId);
+    }
+  }
+  return ids;
+}
+
+/**
+ * Guarantee photos a place in the current arrangement. Once a user asks for
+ * specific photos, the arrangement becomes a manual list (template still
+ * handles crops, motion and timing) with the new photos appended.
+ */
+export async function addPhotosToArrangement(reelId: string, photoIds: string[]): Promise<void> {
+  await db.photos.where('id').anyOf(photoIds).modify({ included: true });
+  const reel = await db.reels.get(reelId);
+  const active = reel?.versions.find((v) => v.id === reel.activeVersionId);
+  if (!reel || !active) return; // no arrangement yet — templates pick these up
+  const order = reel.manualOrder ?? stripOrder(active.timeline);
+  for (const id of photoIds) {
+    if (!order.includes(id)) order.push(id);
+  }
+  await db.reels.update(reelId, { manualOrder: order, updatedAt: Date.now() });
+  await rebuildActiveVersion(reelId);
+}
+
+/** Take photos out of the arrangement (and out of the reel). */
+export async function removePhotosFromArrangement(reelId: string, photoIds: string[]): Promise<void> {
+  await db.photos.where('id').anyOf(photoIds).modify({ included: false });
+  const reel = await db.reels.get(reelId);
+  if (!reel) return;
+  if (reel.manualOrder) {
+    const remove = new Set(photoIds);
+    await db.reels.update(reelId, {
+      manualOrder: reel.manualOrder.filter((id) => !remove.has(id)),
+      updatedAt: Date.now(),
+    });
+  }
+  await rebuildActiveVersion(reelId);
+}
+
 export async function duplicateReel(reelId: string): Promise<ReelRecord | null> {
   const reel = await db.reels.get(reelId);
   if (!reel) return null;

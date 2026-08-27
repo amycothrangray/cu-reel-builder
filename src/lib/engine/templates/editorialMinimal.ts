@@ -22,7 +22,7 @@ export function buildEditorialMinimal(
 ): Timeline {
   const rand = mulberry32(ctx.seed);
   const count = photoCountFor(ctx.durationMs, 2.2, photos.length, 3);
-  const sequence = sequenceFor(photos, count, ctx, () => arrangePhotos(photos, count, ctx.seed));
+  const sequence = sequenceFor(photos, count, ctx, () => arrangePhotos(photos, count, ctx.seed), 1400);
 
   // Perfectly even pacing — the discipline is the style.
   const cuts = planCuts(ctx.durationMs, sequence.length, ctx.beats, {

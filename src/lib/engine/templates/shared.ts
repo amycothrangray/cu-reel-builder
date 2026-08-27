@@ -24,14 +24,23 @@ export interface TemplateContext {
   fixedOrder?: boolean;
 }
 
-/** Respect a user's manual order; otherwise let the template arrange. */
+/**
+ * Respect a user's manual order; otherwise let the template arrange.
+ *
+ * A manual list is an exact request: use ALL of it, in order, even past the
+ * template's ideal count — capped only by what physically fits the duration
+ * at the template's minimum slide length.
+ */
 export function sequenceFor(
   photos: SequencePhoto[],
-  count: number,
+  _idealCount: number,
   ctx: TemplateContext,
   arrange: () => SequencePhoto[],
+  minClipMs = 900,
 ): SequencePhoto[] {
-  return ctx.fixedOrder ? photos.slice(0, Math.min(count, photos.length)) : arrange();
+  if (!ctx.fixedOrder) return arrange();
+  const capacity = Math.max(3, Math.floor(ctx.durationMs / minClipMs));
+  return photos.slice(0, Math.min(photos.length, capacity));
 }
 
 export const FRAME = { width: 1080, height: 1920, fps: 30 };
