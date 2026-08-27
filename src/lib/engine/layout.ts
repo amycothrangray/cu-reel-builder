@@ -223,6 +223,20 @@ export interface PhotoLike {
   height: number;
   faces: FaceBox[];
   aiSubject?: NRect;
+  /** User-set crop — always wins over automatic framing. */
+  customCrop?: NRect;
+}
+
+/** Center-shrink a rect by a zoom factor (result always stays inside). */
+export function shrinkRect(rect: NRect, zoom: number): NRect {
+  const w = rect.w / zoom;
+  const h = rect.h / zoom;
+  return {
+    x: rect.x + (rect.w - w) / 2,
+    y: rect.y + (rect.h - h) / 2,
+    w,
+    h,
+  };
 }
 
 export type TreatmentKind = 'cover-push' | 'cover-pull' | 'pan' | 'full-blur' | 'static';
@@ -242,6 +256,16 @@ export function planTreatment(
 ): MotionPlan {
   const { width, height, faces, aiSubject } = photo;
   const aspect = width / height;
+
+  // A user-set crop overrides all automatic framing. Motion happens inside
+  // the chosen crop so nothing the user framed out ever appears.
+  if (photo.customCrop) {
+    const crop = photo.customCrop;
+    if (prefer === 'static') return { crop, cropEnd: crop, fill: 'cover' };
+    const tight = shrinkRect(crop, 1.06);
+    if (prefer === 'cover-pull') return { crop: tight, cropEnd: crop, fill: 'cover' };
+    return { crop, cropEnd: tight, fill: 'cover' };
+  }
 
   if (prefer === 'full-blur') return planFullImage(width, height, faces);
   if (prefer === 'static') {
@@ -287,6 +311,8 @@ export function planTreatment(
  */
 export function canStackPair(a: PhotoLike, b: PhotoLike): boolean {
   const halfAspect = 9 / 8;
+  // A photo with a user-set 9:16 crop shouldn't be re-framed into a half slot.
+  if (a.customCrop || b.customCrop) return false;
   for (const p of [a, b]) {
     if (p.width / p.height <= 1.05) return false; // stacking is for horizontals
     const focus = subjectRect(p.faces);

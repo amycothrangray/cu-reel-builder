@@ -56,14 +56,17 @@ export function buildEditorialMinimal(
         transitionIn: { kind: 'fade' as const, durationMs: 350 },
       };
     }
-    // Full-bleed: static or near-static crop. No gimmicks.
+    // Full-bleed: static or near-static crop. No gimmicks. A user-set crop
+    // always wins over automatic framing.
     const focus = subjectRect(photo.faces, photo.aiSubject);
-    const crop = avoidFaceSlice(
-      coverCrop(photo.width, photo.height, TARGET_ASPECT, focus),
-      photo.faces,
-    );
+    const crop =
+      photo.customCrop ??
+      avoidFaceSlice(
+        coverCrop(photo.width, photo.height, TARGET_ASPECT, focus),
+        photo.faces,
+      );
     const still = planTreatment(photo, TARGET_ASPECT, 'static');
-    const useStill = rand() < 0.5;
+    const useStill = photo.customCrop ? true : rand() < 0.5;
     return {
       id: uid(),
       startMs: windows[i].startMs,

@@ -73,6 +73,36 @@ describe('safe crop behavior', () => {
   });
 });
 
+describe('custom crops', () => {
+  const custom = { x: 0.55, y: 0.1, w: 0.28, h: 0.8 };
+
+  it('a user-set crop overrides automatic framing exactly', () => {
+    const photo = makePhoto({
+      width: 6000,
+      height: 4000,
+      faces: [face(0.1, 0.3, 0.08, 0.14)], // face the user chose to exclude
+      customCrop: custom,
+    });
+    const still = planTreatment(photo, V, 'static');
+    expect(still.crop).toEqual(custom);
+    expect(still.cropEnd).toEqual(custom);
+    // Motion variants stay inside the user's crop.
+    const push = planTreatment(photo, V);
+    for (const rect of [push.crop, push.cropEnd]) {
+      expect(rect.x).toBeGreaterThanOrEqual(custom.x - 0.001);
+      expect(rect.y).toBeGreaterThanOrEqual(custom.y - 0.001);
+      expect(rect.x + rect.w).toBeLessThanOrEqual(custom.x + custom.w + 0.001);
+      expect(rect.y + rect.h).toBeLessThanOrEqual(custom.y + custom.h + 0.001);
+    }
+  });
+
+  it('custom-cropped photos are never re-framed into stacked slots', () => {
+    const a = makePhoto({ width: 6000, height: 4000, customCrop: custom });
+    const b = makePhoto({ width: 6000, height: 4000 });
+    expect(canStackPair(a, b)).toBe(false);
+  });
+});
+
 describe('stacked pairs', () => {
   it('only stacks horizontal photos whose faces survive the half-frame crop', () => {
     const a = makePhoto({ width: 6000, height: 4000, faces: [face(0.45, 0.3, 0.1, 0.2)] });

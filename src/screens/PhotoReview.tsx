@@ -2,43 +2,47 @@ import { useMemo, useRef, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { blobKey, db, auditLog, deletePhotoCompletely, getBlob, putBlob } from '../lib/db';
-import { effectiveClassification, correctionAllowed, type PhotoRecord } from '../lib/types';
-import { recommendSubset } from '../lib/analysis/score';
-import { phashDistance, isNearDuplicate } from '../lib/imaging/similarity';
+import { effectiveClassification, correctionAllowed, type NRect, type PhotoRecord } from '../lib/types';
+import { isNearDuplicate } from '../lib/imaging/similarity';
 import { renderCorrected } from '../lib/imaging/correction';
 import { canvasToBlob } from '../lib/imaging/decode';
 import { matchConfidenceLabel } from '../lib/restricted/matching';
 import { ingestFiles } from '../lib/analysis/ingest';
 import { enrichWithAi } from '../lib/analysis/aiVision';
+import { rebuildActiveVersion } from '../lib/reels';
 import { useBlobUrl, invalidateBlobUrl } from '../components/hooks';
 import { Modal } from '../components/Modal';
+import { CropEditor } from '../components/CropEditor';
 import { useAdminAction } from '../components/AdminGate';
 import { useToasts } from '../components/toast';
 
-function Badges({ photo, recommended }: { photo: PhotoRecord; recommended: boolean }) {
+function Badges({ photo, reelIndex }: { photo: PhotoRecord; reelIndex?: number }) {
   const cls = effectiveClassification(photo);
   const flagged = photo.restrictedFlags.some((f) => f.status === 'pending' || f.status === 'blocked');
   return (
     <div className="badges">
       {flagged && <span className="badge badge-restricted">Restricted?</span>}
+      {reelIndex !== undefined && (
+        <span className="badge badge-recommended">In reel · {reelIndex + 1}</span>
+      )}
       {cls === 'pro' && <span className="badge badge-pro">Pro</span>}
       {cls === 'mobile' && <span className="badge badge-mobile">Mobile</span>}
       {photo.correctionEnabled && photo.hasCorrected && (
         <span className="badge badge-corrected">Corrected</span>
       )}
-      {recommended && !flagged && <span className="badge badge-recommended">Recommended</span>}
+      {photo.customCrop && <span className="badge">Cropped</span>}
     </div>
   );
 }
 
 function PhotoCell({
   photo,
-  recommended,
+  reelIndex,
   duplicate,
   onOpen,
 }: {
   photo: PhotoRecord;
-  recommended: boolean;
+  reelIndex?: number;
   duplicate: boolean;
   onOpen: () => void;
 }) {
@@ -58,7 +62,7 @@ function PhotoCell({
       )}
       {photo.status === 'ready' && (
         <>
-          <Badges photo={photo} recommended={recommended} />
+          <Badges photo={photo} reelIndex={reelIndex} />
           {duplicate && (
             <span className="badge badge-duplicate" style={{ position: 'absolute', top: 6, right: 6 }}>
               Duplicate
@@ -77,12 +81,22 @@ function PhotoCell({
 
 // ---------------------------------------------------------------------------
 
-function DetailModal({ photo, onClose }: { photo: PhotoRecord; onClose: () => void }) {
+function DetailModal({
+  photo,
+  onClose,
+  onChanged,
+}: {
+  photo: PhotoRecord;
+  onClose: () => void;
+  /** Called after any change that affects the reel arrangement. */
+  onChanged: () => void;
+}) {
   const show = useToasts((s) => s.show);
   const { requireAdmin, GateModal } = useAdminAction();
   const previewUrl = useBlobUrl(blobKey.preview(photo.id));
   const correctedUrl = useBlobUrl(photo.hasCorrected ? blobKey.corrected(photo.id) : null);
   const [showOriginal, setShowOriginal] = useState(false);
+  const [cropping, setCropping] = useState(false);
 
   const cls = effectiveClassification(photo);
   const showingCorrected =
@@ -93,13 +107,12 @@ function DetailModal({ photo, onClose }: { photo: PhotoRecord; onClose: () => vo
 
   const setOverride = async (value: 'pro' | 'mobile' | undefined) => {
     const patch: Partial<PhotoRecord> = { overrideClassification: value };
-    // Treat-as-Pro immediately disables any correction; Allow-Mobile enables
-    // correction rendering if analysis says it helps.
     if (value === 'pro') patch.correctionEnabled = false;
     await db.photos.update(photo.id, patch);
     if (value === 'mobile' && !photo.hasCorrected && photo.analysis) {
       await renderCorrectionFor(photo);
     }
+    onChanged();
   };
 
   const renderCorrectionFor = async (p: PhotoRecord) => {
@@ -121,6 +134,13 @@ function DetailModal({ photo, onClose }: { photo: PhotoRecord; onClose: () => vo
     }
   };
 
+  const saveCrop = async (crop: NRect | undefined) => {
+    await db.photos.update(photo.id, { customCrop: crop });
+    setCropping(false);
+    onChanged();
+    show(crop ? 'Crop saved — the reel will use this framing.' : 'Custom crop removed.');
+  };
+
   const reviewFlag = async (
     profileId: string,
     status: 'safe' | 'blocked' | 'removed',
@@ -129,6 +149,7 @@ function DetailModal({ photo, onClose }: { photo: PhotoRecord; onClose: () => vo
       if (status === 'removed') {
         await auditLog('admin', 'restricted-remove-photo', `photo ${photo.fileName}`);
         await deletePhotoCompletely(photo.id);
+        onChanged();
         onClose();
         return;
       }
@@ -144,9 +165,8 @@ function DetailModal({ photo, onClose }: { photo: PhotoRecord; onClose: () => vo
         `restricted-mark-${status}`,
         `photo ${photo.fileName}, profile ${profileId}`,
       );
+      onChanged();
     };
-    // Overriding a warning (marking safe) is admin-only. Removing the photo
-    // or keeping it blocked are the safe directions — anyone can do those.
     if (status === 'safe') {
       requireAdmin(() => void apply());
     } else {
@@ -203,56 +223,76 @@ function DetailModal({ photo, onClose }: { photo: PhotoRecord; onClose: () => vo
         </div>
       )}
 
-      <div style={{ position: 'relative', borderRadius: 12, overflow: 'hidden', background: 'var(--paper-sunken)' }}>
-        {previewUrl && (
-          <img
-            src={showingCorrected ? correctedUrl! : previewUrl}
-            alt=""
-            style={{ width: '100%', display: 'block', maxHeight: '48vh', objectFit: 'contain' }}
-          />
-        )}
-        {/* Face regions under question */}
-        {pendingFlags.map((flag, i) => (
-          <div
-            key={i}
-            style={{
-              position: 'absolute',
-              left: `${flag.face.x * 100}%`,
-              top: `${flag.face.y * 100}%`,
-              width: `${flag.face.w * 100}%`,
-              height: `${flag.face.h * 100}%`,
-              border: '2px solid var(--danger)',
-              borderRadius: 4,
-            }}
-          />
-        ))}
-      </div>
+      {cropping && previewUrl ? (
+        <CropEditor
+          imageUrl={showingCorrected ? correctedUrl! : previewUrl}
+          imageWidth={photo.width}
+          imageHeight={photo.height}
+          initial={photo.customCrop}
+          onSave={(crop) => void saveCrop(crop)}
+          onReset={() => void saveCrop(undefined)}
+          onClose={() => setCropping(false)}
+        />
+      ) : (
+        <>
+          <div style={{ position: 'relative', borderRadius: 12, overflow: 'hidden', background: 'var(--paper-sunken)' }}>
+            {previewUrl && (
+              <img
+                src={showingCorrected ? correctedUrl! : previewUrl}
+                alt=""
+                style={{ width: '100%', display: 'block', maxHeight: '48vh', objectFit: 'contain' }}
+              />
+            )}
+            {pendingFlags.map((flag, i) => (
+              <div
+                key={i}
+                style={{
+                  position: 'absolute',
+                  left: `${flag.face.x * 100}%`,
+                  top: `${flag.face.y * 100}%`,
+                  width: `${flag.face.w * 100}%`,
+                  height: `${flag.face.h * 100}%`,
+                  border: '2px solid var(--danger)',
+                  borderRadius: 4,
+                }}
+              />
+            ))}
+          </div>
 
-      {photo.hasCorrected && correctionAllowed(photo) && (
-        <div className="row wrap" style={{ marginTop: 12 }}>
-          <button
-            className="btn btn-secondary btn-sm"
-            onPointerDown={() => setShowOriginal(true)}
-            onPointerUp={() => setShowOriginal(false)}
-            onPointerLeave={() => setShowOriginal(false)}
-          >
-            {showOriginal ? 'Original' : 'Hold to compare original'}
-          </button>
-          <label className="row" style={{ gap: 6, fontSize: 14 }}>
-            <input
-              type="checkbox"
-              checked={photo.correctionEnabled}
-              onChange={(e) => void db.photos.update(photo.id, { correctionEnabled: e.target.checked })}
-            />
-            Apply gentle correction
-          </label>
-          <button
-            className="btn btn-ghost btn-sm"
-            onClick={() => void db.photos.update(photo.id, { correctionEnabled: false })}
-          >
-            Restore Original
-          </button>
-        </div>
+          <div className="row wrap" style={{ marginTop: 12 }}>
+            <button className="btn btn-secondary btn-sm" onClick={() => setCropping(true)}>
+              {photo.customCrop ? 'Adjust crop' : 'Crop for reel'}
+            </button>
+            {photo.hasCorrected && correctionAllowed(photo) && (
+              <>
+                <button
+                  className="btn btn-secondary btn-sm"
+                  onPointerDown={() => setShowOriginal(true)}
+                  onPointerUp={() => setShowOriginal(false)}
+                  onPointerLeave={() => setShowOriginal(false)}
+                >
+                  {showOriginal ? 'Original' : 'Hold to compare original'}
+                </button>
+                <label className="row" style={{ gap: 6, fontSize: 14 }}>
+                  <input
+                    type="checkbox"
+                    checked={photo.correctionEnabled}
+                    onChange={(e) => {
+                      void db.photos.update(photo.id, { correctionEnabled: e.target.checked }).then(onChanged);
+                    }}
+                  />
+                  Apply gentle correction
+                </label>
+                <button
+                  className="btn btn-ghost btn-sm"
+                  onClick={() => void db.photos.update(photo.id, { correctionEnabled: false }).then(onChanged)}
+                >
+                  Restore Original
+                </button>
+              </>
+            )}
+          </div>
+        </>
       )}
 
       <hr className="divider" />
@@ -288,7 +328,7 @@ function DetailModal({ photo, onClose }: { photo: PhotoRecord; onClose: () => vo
           <input
             type="checkbox"
             checked={photo.included}
-            onChange={(e) => void db.photos.update(photo.id, { included: e.target.checked })}
+            onChange={(e) => void db.photos.update(photo.id, { included: e.target.checked }).then(onChanged)}
           />
           Include in reel
         </label>
@@ -298,7 +338,10 @@ function DetailModal({ photo, onClose }: { photo: PhotoRecord; onClose: () => vo
           style={{ color: 'var(--danger)' }}
           onClick={() => {
             if (window.confirm('Remove this photo from the reel entirely?')) {
-              void deletePhotoCompletely(photo.id).then(onClose);
+              void deletePhotoCompletely(photo.id).then(() => {
+                onChanged();
+                onClose();
+              });
             }
           }}
         >
@@ -329,13 +372,18 @@ export function PhotoReviewScreen() {
   const ready = useMemo(() => (photos ?? []).filter((p) => p.status === 'ready'), [photos]);
   const analyzing = (photos ?? []).some((p) => p.status === 'ingesting' || p.status === 'analyzing');
 
-  const recommendedIds = useMemo(() => {
-    const scored = ready
-      .filter((p) => p.analysis)
-      .map((p) => ({ id: p.id, score: p.analysis!.score, phash: p.analysis!.phash }));
-    const needed = Math.min(scored.length, 12);
-    return recommendSubset(scored, needed, phashDistance);
-  }, [ready]);
+  // Which photos appear in the current arrangement, and in what order.
+  const inReelIndex = useMemo(() => {
+    const map = new Map<string, number>();
+    const version = reel?.versions.find((v) => v.id === reel.activeVersionId);
+    if (!version) return map;
+    for (const clip of version.timeline.clips) {
+      for (const layer of clip.layers) {
+        if (!map.has(layer.photoId)) map.set(layer.photoId, map.size);
+      }
+    }
+    return map;
+  }, [reel]);
 
   const duplicateIds = useMemo(() => {
     const seen: { id: string; phash: string }[] = [];
@@ -353,12 +401,15 @@ export function PhotoReviewScreen() {
 
   if (!reel || !photos) return null;
 
-  const recommended = ready.filter((p) => recommendedIds.has(p.id));
-  const others = (photos ?? []).filter((p) => !recommendedIds.has(p.id));
   const flaggedCount = ready.filter((p) =>
     p.restrictedFlags.some((f) => f.status === 'pending'),
   ).length;
   const openPhoto = photos.find((p) => p.id === openPhotoId);
+  const inReelCount = inReelIndex.size;
+
+  const refreshArrangement = () => {
+    if (reelId) void rebuildActiveVersion(reelId);
+  };
 
   const bulk = async (fn: (p: PhotoRecord) => Partial<PhotoRecord>) => {
     for (const id of selected) {
@@ -367,54 +418,8 @@ export function PhotoReviewScreen() {
     }
     setSelected(new Set());
     setSelecting(false);
+    refreshArrangement();
   };
-
-  const grid = (list: PhotoRecord[]) => (
-    <div className="photo-grid">
-      {list.map((photo) => (
-        <div key={photo.id} style={{ position: 'relative' }}>
-          <PhotoCell
-            photo={photo}
-            recommended={recommendedIds.has(photo.id)}
-            duplicate={duplicateIds.has(photo.id)}
-            onOpen={() => {
-              if (selecting) {
-                setSelected((s) => {
-                  const next = new Set(s);
-                  if (next.has(photo.id)) next.delete(photo.id);
-                  else next.add(photo.id);
-                  return next;
-                });
-              } else {
-                setOpenPhotoId(photo.id);
-              }
-            }}
-          />
-          {selecting && (
-            <div
-              style={{
-                position: 'absolute',
-                top: 6,
-                left: 6,
-                width: 22,
-                height: 22,
-                borderRadius: 6,
-                border: '2px solid #fff',
-                background: selected.has(photo.id) ? 'var(--ink)' : 'rgba(0,0,0,0.25)',
-                display: 'grid',
-                placeItems: 'center',
-                color: '#fff',
-                fontSize: 13,
-                pointerEvents: 'none',
-              }}
-            >
-              {selected.has(photo.id) ? '✓' : ''}
-            </div>
-          )}
-        </div>
-      ))}
-    </div>
-  );
 
   return (
     <div>
@@ -423,6 +428,7 @@ export function PhotoReviewScreen() {
           <h1>{reel.name}</h1>
           <p className="muted" style={{ marginTop: 4 }}>
             {ready.length} photos
+            {inReelCount > 0 ? ` · ${inReelCount} in the current reel` : ''}
             {analyzing ? ' · still looking through a few…' : ''}
             {flaggedCount > 0 ? ` · ${flaggedCount} need review` : ''}
           </p>
@@ -434,13 +440,19 @@ export function PhotoReviewScreen() {
         <button className="btn btn-secondary" onClick={() => addInputRef.current?.click()}>
           Add photos
         </button>
-        <button
-          className="btn btn-primary btn-lg"
-          disabled={ready.filter((p) => p.included).length < 3}
-          onClick={() => navigate(`/reel/${reel.id}/template`)}
-        >
-          Choose a style
-        </button>
+        {reel.templateId ? (
+          <Link to={`/reel/${reel.id}/edit`} className="btn btn-primary btn-lg">
+            Back to editor
+          </Link>
+        ) : (
+          <button
+            className="btn btn-primary btn-lg"
+            disabled={ready.filter((p) => p.included).length < 3}
+            onClick={() => navigate(`/reel/${reel.id}/template`)}
+          >
+            Choose a style
+          </button>
+        )}
       </div>
 
       {flaggedCount > 0 && (
@@ -482,18 +494,50 @@ export function PhotoReviewScreen() {
         </div>
       )}
 
-      {recommended.length > 0 && (
-        <>
-          <h3 style={{ margin: '8px 0 12px' }}>Recommended</h3>
-          {grid(recommended)}
-        </>
-      )}
-      {others.length > 0 && (
-        <>
-          <h3 style={{ margin: '24px 0 12px' }}>Other uploads</h3>
-          {grid(others)}
-        </>
-      )}
+      <div className="photo-grid">
+        {photos.map((photo) => (
+          <div key={photo.id} style={{ position: 'relative' }}>
+            <PhotoCell
+              photo={photo}
+              reelIndex={inReelIndex.get(photo.id)}
+              duplicate={duplicateIds.has(photo.id)}
+              onOpen={() => {
+                if (selecting) {
+                  setSelected((s) => {
+                    const next = new Set(s);
+                    if (next.has(photo.id)) next.delete(photo.id);
+                    else next.add(photo.id);
+                    return next;
+                  });
+                } else {
+                  setOpenPhotoId(photo.id);
+                }
+              }}
+            />
+            {selecting && (
+              <div
+                style={{
+                  position: 'absolute',
+                  top: 6,
+                  left: 6,
+                  width: 22,
+                  height: 22,
+                  borderRadius: 6,
+                  border: '2px solid #fff',
+                  background: selected.has(photo.id) ? 'var(--ink)' : 'rgba(0,0,0,0.25)',
+                  display: 'grid',
+                  placeItems: 'center',
+                  color: '#fff',
+                  fontSize: 13,
+                  pointerEvents: 'none',
+                }}
+              >
+                {selected.has(photo.id) ? '✓' : ''}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
 
       {photos.length === 0 && (
         <div className="empty-state panel">
@@ -514,12 +558,19 @@ export function PhotoReviewScreen() {
           if (e.target.files?.length && reelId) {
             void ingestFiles(reelId, Array.from(e.target.files)).then(() => {
               void enrichWithAi(reelId);
+              refreshArrangement();
             });
           }
         }}
       />
 
-      {openPhoto && <DetailModal photo={openPhoto} onClose={() => setOpenPhotoId(null)} />}
+      {openPhoto && (
+        <DetailModal
+          photo={openPhoto}
+          onClose={() => setOpenPhotoId(null)}
+          onChanged={refreshArrangement}
+        />
+      )}
     </div>
   );
 }

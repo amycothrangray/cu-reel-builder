@@ -6,6 +6,7 @@ import { getBrand, generateVersion, rebuildActiveVersion, touchReel, addMusicTra
 import { loadResources, type LoadedResources } from '../lib/engine/resources';
 import { ReelPlayer } from '../lib/engine/preview';
 import { TEMPLATES } from '../lib/engine/templates';
+import { rapidFireCapacity } from '../lib/engine/templates/rapidFire';
 import { useBlobUrl } from '../components/hooks';
 import { useToasts } from '../components/toast';
 import type { ReelDuration, ReelRecord, TemplateId } from '../lib/types';
@@ -390,6 +391,12 @@ export function EditorScreen() {
                   </button>
                 ))}
               </div>
+              {reel.templateId === 'rapid-fire' && (
+                <span className="hint">
+                  Rapid Fire fits up to {rapidFireCapacity(reel.durationSec * 1000)} photos at{' '}
+                  {reel.durationSec}s — pick 15s for the biggest sets.
+                </span>
+              )}
             </div>
             <div className="field">
               <label>Music</label>

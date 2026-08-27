@@ -84,6 +84,11 @@ export async function loadResources(
   const blurred = new Map<string, HTMLCanvasElement>();
   const bitmaps: ImageBitmap[] = [];
 
+  // Big sets (Rapid Fire can use 100+ photos) must not exhaust memory —
+  // decoded RGBA is ~4 bytes/px, so scale the working size down with count.
+  // At flash pacing the smaller decode is visually indistinguishable.
+  const maxEdge = neededIds.size > 60 ? 900 : neededIds.size > 30 ? 1200 : 1600;
+
   for (const id of neededIds) {
     const photo = photoById.get(id);
     if (!photo) continue;
@@ -94,9 +99,23 @@ export async function loadResources(
       (await getBlob(blobKey.preview(id)));
     if (!blob) continue;
     const bitmap = await createImageBitmap(blob);
-    bitmaps.push(bitmap);
-    images.set(id, bitmap);
-    blurred.set(id, makeBlurred(bitmap));
+    if (Math.max(bitmap.width, bitmap.height) > maxEdge) {
+      // Downscale onto a canvas and release the full-size bitmap.
+      const scale = maxEdge / Math.max(bitmap.width, bitmap.height);
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+      canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+      const cctx = canvas.getContext('2d')!;
+      cctx.imageSmoothingQuality = 'high';
+      cctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+      images.set(id, canvas);
+      blurred.set(id, makeBlurred(bitmap));
+      bitmap.close();
+    } else {
+      bitmaps.push(bitmap);
+      images.set(id, bitmap);
+      blurred.set(id, makeBlurred(bitmap));
+    }
   }
 
   let logo: ImageBitmap | null = null;

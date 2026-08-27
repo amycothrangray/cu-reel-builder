@@ -106,6 +106,11 @@ export interface PhotoRecord {
   correctionEnabled: boolean;
   /** True once a corrected render exists in the blob store. */
   hasCorrected: boolean;
+  /**
+   * User-set 9:16 crop (normalized source rect). Overrides the automatic
+   * framing wherever the photo appears full-frame. Presentation-only.
+   */
+  customCrop?: NRect;
   included: boolean;
   restrictedFlags: RestrictedFlag[];
   status: 'ingesting' | 'analyzing' | 'ready' | 'error';
@@ -126,6 +131,7 @@ export type TemplateId =
   | 'signature-energy'
   | 'cinematic-story'
   | 'quick-cut'
+  | 'rapid-fire'
   | 'editorial-minimal'
   | 'photo-story';
 

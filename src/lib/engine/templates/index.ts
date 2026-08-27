@@ -8,6 +8,7 @@ import type { TemplateContext } from './shared';
 import { buildSignatureEnergy } from './signatureEnergy';
 import { buildCinematicStory } from './cinematicStory';
 import { buildQuickCut } from './quickCut';
+import { buildRapidFire } from './rapidFire';
 import { buildEditorialMinimal } from './editorialMinimal';
 import { buildPhotoStory } from './photoStory';
 
@@ -46,6 +47,14 @@ export const TEMPLATES: TemplateDefinition[] = [
     build: buildQuickCut,
   },
   {
+    id: 'rapid-fire',
+    name: 'Rapid Fire',
+    description: 'Blink-and-you-miss-it — your whole set in quick hits, under half a second each.',
+    pace: '~0.15–0.5s per photo',
+    idealFor: 'Big sets (50–100+ photos), events, year-in-review, photo dumps',
+    build: buildRapidFire,
+  },
+  {
     id: 'editorial-minimal',
     name: 'Editorial Minimal',
     description: 'Clean and deliberate, with gallery framing and elegant type.',
@@ -76,6 +85,7 @@ export function surpriseMe(photos: SequencePhoto[], seed: number): TemplateId {
   const withFaces = photos.filter((p) => p.faces.length > 0).length;
   const roles = new Set(photos.map((p) => (p.ai?.storyRole ? p.ai.storyRole : null)).filter(Boolean));
 
+  if (n >= 30) return 'rapid-fire'; // huge sets want the flash treatment
   if (n >= 12) return 'quick-cut'; // big sets thrive on pace
   if (roles.size >= 4) return 'photo-story'; // rich narrative variety
   if (withFaces / Math.max(1, n) < 0.4) return 'editorial-minimal'; // scenic/detail sets

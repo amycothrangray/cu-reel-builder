@@ -14,6 +14,7 @@ function TemplateSketch({ id }: { id: TemplateId }) {
     'signature-energy': { duration: '1.7s', blocks: 3, fade: false },
     'cinematic-story': { duration: '3s', blocks: 2, fade: true },
     'quick-cut': { duration: '0.9s', blocks: 4, fade: false },
+    'rapid-fire': { duration: '0.35s', blocks: 6, fade: false },
     'editorial-minimal': { duration: '2.4s', blocks: 2, fade: true },
     'photo-story': { duration: '2s', blocks: 3, fade: false },
   };

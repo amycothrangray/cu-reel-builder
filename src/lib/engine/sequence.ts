@@ -14,6 +14,7 @@ export interface SequencePhoto {
   stats: ImageStats;
   ai?: AiInsight;
   aiSubject?: NRect;
+  customCrop?: NRect;
 }
 
 /** Deterministic PRNG so a given seed reproduces the same arrangement. */

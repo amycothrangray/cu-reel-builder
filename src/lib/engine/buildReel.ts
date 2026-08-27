@@ -40,6 +40,7 @@ export function toSequencePhoto(p: PhotoRecord): SequencePhoto {
     },
     ai: p.analysis?.ai,
     aiSubject: p.analysis?.ai?.subjectRect,
+    customCrop: p.customCrop,
   };
 }
 
