@@ -1,0 +1,269 @@
+// Core data model. Everything persisted lives in IndexedDB (see db.ts) —
+// photos and reels never leave the device unless the optional AI analysis
+// route is enabled, and even then only downscaled previews are sent.
+
+export type Classification = 'pro' | 'mobile' | 'uncertain';
+
+export interface ClassificationResult {
+  label: Classification;
+  confidence: number; // 0..1
+  reasons: string[];
+}
+
+/** Normalized rectangle: all values 0..1 relative to image dimensions. */
+export interface NRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+export interface FaceBox extends NRect {
+  score: number;
+}
+
+export interface ExifSummary {
+  make?: string;
+  model?: string;
+  lensModel?: string;
+  focalLength?: number;
+  fNumber?: number;
+  iso?: number;
+  software?: string;
+  dateTaken?: string;
+}
+
+/** Deterministic per-image measurements computed locally from a preview. */
+export interface ImageStats {
+  sharpness: number;        // Laplacian variance, normalized-ish
+  contrast: number;         // 0..1 luma std-dev
+  saturation: number;       // 0..1 mean
+  warmth: number;           // R-B balance, ~0 neutral, positive = warm
+  highlightClip: number;    // fraction of near-white pixels
+  shadowCrush: number;      // fraction of near-black pixels
+  meanLuma: number;         // 0..1
+  skinWarmthExcess: number; // how orange detected skin-tone pixels skew
+  skinFraction: number;     // fraction of pixels that look like skin
+}
+
+/** Optional AI enrichment (from the Netlify vision function, if configured). */
+export interface AiInsight {
+  storyRole?:
+    | 'establishing'
+    | 'interaction'
+    | 'closeup'
+    | 'detail'
+    | 'movement'
+    | 'portrait'
+    | 'emotional'
+    | 'closing';
+  subjectRect?: NRect;
+  appeal?: number; // 0..1
+  notes?: string;
+}
+
+export interface PhotoAnalysis {
+  stats: ImageStats;
+  faces: FaceBox[];
+  phash: string; // 64-bit perceptual hash as hex
+  classification: ClassificationResult;
+  /** Composite quality score 0..1 used for auto-selection. */
+  score: number;
+  ai?: AiInsight;
+  analyzedAt: number;
+  version: number; // bump to invalidate cached analyses
+}
+
+export type RestrictedFlagStatus = 'pending' | 'safe' | 'blocked' | 'removed';
+
+export interface RestrictedFlag {
+  profileId: string;
+  profileLabel: string;
+  face: FaceBox;
+  /** Euclidean distance between embeddings — lower is more similar. */
+  distance: number;
+  status: RestrictedFlagStatus;
+  reviewedAt?: number;
+  reviewedBy?: string;
+}
+
+export interface PhotoRecord {
+  id: string;
+  reelId: string;
+  hash: string;
+  fileName: string;
+  mimeType: string;
+  bytes: number;
+  width: number;
+  height: number;
+  addedAt: number;
+  order: number;
+  exif: ExifSummary;
+  analysis?: PhotoAnalysis;
+  /** Manual override always wins over automatic classification. */
+  overrideClassification?: 'pro' | 'mobile';
+  /** Whether the restrained mobile correction is applied. */
+  correctionEnabled: boolean;
+  /** True once a corrected render exists in the blob store. */
+  hasCorrected: boolean;
+  included: boolean;
+  restrictedFlags: RestrictedFlag[];
+  status: 'ingesting' | 'analyzing' | 'ready' | 'error';
+  error?: string;
+}
+
+export const effectiveClassification = (p: PhotoRecord): Classification =>
+  p.overrideClassification ?? p.analysis?.classification.label ?? 'uncertain';
+
+/** Correction may only ever apply to photos treated as mobile/casual. */
+export const correctionAllowed = (p: PhotoRecord): boolean =>
+  effectiveClassification(p) === 'mobile';
+
+// ---------------------------------------------------------------------------
+// Reels
+
+export type TemplateId =
+  | 'signature-energy'
+  | 'cinematic-story'
+  | 'quick-cut'
+  | 'editorial-minimal'
+  | 'photo-story';
+
+export type ReelDuration = 9 | 12 | 15;
+
+export interface ReelTextConfig {
+  title: string;
+  caption: string;
+  cta: string;
+  showHandle: boolean;
+}
+
+export interface ReelVersion {
+  id: string;
+  label: string; // "Version 1", …
+  createdAt: number;
+  timeline: import('./engine/types').Timeline;
+}
+
+export interface ReelRecord {
+  id: string;
+  name: string;
+  createdAt: number;
+  updatedAt: number;
+  status: 'draft' | 'ready' | 'exported';
+  templateId: TemplateId | null;
+  durationSec: ReelDuration;
+  text: ReelTextConfig;
+  musicAssetKey: string | null;
+  musicName: string | null;
+  versions: ReelVersion[];
+  activeVersionId: string | null;
+  /** Manual photo order set by dragging; null = template decides. */
+  manualOrder: string[] | null;
+  exportedAt?: number;
+}
+
+// ---------------------------------------------------------------------------
+// Brand
+
+export interface BrandFont {
+  assetKey: string;
+  fileName: string;
+  family: string; // registered FontFace family name
+}
+
+export interface BrandConfig {
+  id: 'brand';
+  primaryFont: BrandFont | null;
+  secondaryFont: BrandFont | null;
+  logoAssetKey: string | null;
+  primaryColor: string;
+  secondaryColor: string;
+  cta: string;
+  website: string;
+  instagram: string;
+  updatedAt: number;
+}
+
+export const defaultBrand = (): BrandConfig => ({
+  id: 'brand',
+  primaryFont: null,
+  secondaryFont: null,
+  logoAssetKey: null,
+  primaryColor: '#211d18',
+  secondaryColor: '#faf8f5',
+  cta: 'Book your session',
+  website: '',
+  instagram: '',
+  updatedAt: Date.now(),
+});
+
+// ---------------------------------------------------------------------------
+// Restricted-child protection
+
+export interface RestrictedProfile {
+  id: string;
+  label: string; // internal label only — no birth dates, schools, addresses
+  disabled: boolean;
+  createdAt: number;
+  updatedAt: number;
+  referenceCount: number;
+}
+
+/** AES-GCM encrypted payload holding embeddings + tiny review thumbnails. */
+export interface RestrictedProfileData {
+  profileId: string;
+  iv: ArrayBuffer;
+  cipher: ArrayBuffer;
+}
+
+export interface RestrictedReference {
+  embedding: number[]; // 128-d face descriptor, computed locally
+  thumbDataUrl: string; // small jpeg for the review screen only
+  addedAt: number;
+}
+
+export interface AuditEntry {
+  id?: number;
+  at: number;
+  actor: string;
+  action: string;
+  details: string;
+}
+
+// ---------------------------------------------------------------------------
+// Music library
+
+export interface MusicTrack {
+  id: string;
+  name: string;
+  assetKey: string;
+  durationSec: number;
+  addedAt: number;
+}
+
+// ---------------------------------------------------------------------------
+// Usage tracking
+
+export type UsageKind = 'reel-created' | 'export' | 'ai-call' | 'analysis';
+
+export interface UsageEvent {
+  id?: number;
+  at: number;
+  kind: UsageKind;
+  meta?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Settings
+
+export interface SettingRow {
+  key: string;
+  value: unknown;
+}
+
+export interface AdminPin {
+  salt: string; // base64
+  hash: string; // base64 PBKDF2-SHA256
+  iterations: number;
+}

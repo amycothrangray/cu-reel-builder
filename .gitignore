@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.netlify/
+.env
+.env.local
+*.local
+# face-api model weights are copied from node_modules at build time
+public/models/
