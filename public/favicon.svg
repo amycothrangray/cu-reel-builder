@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Reel Studio">
+  <rect width="64" height="64" rx="14" fill="#211d18"/>
+  <!-- 9:16 frame: the reel itself -->
+  <rect x="21" y="12" width="22" height="40" rx="4" fill="#faf8f5"/>
+  <!-- horizon + sun: a photograph inside the frame -->
+  <path d="M21 40h22v8a4 4 0 0 1-4 4H25a4 4 0 0 1-4-4z" fill="#8a6f52"/>
+  <circle cx="32" cy="27" r="7" fill="#c8a87c"/>
+  <!-- sprocket marks: film -->
+  <rect x="12" y="18" width="5" height="6" rx="2" fill="#8a6f52"/>
+  <rect x="12" y="29" width="5" height="6" rx="2" fill="#8a6f52"/>
+  <rect x="12" y="40" width="5" height="6" rx="2" fill="#8a6f52"/>
+  <rect x="47" y="18" width="5" height="6" rx="2" fill="#8a6f52"/>
+  <rect x="47" y="29" width="5" height="6" rx="2" fill="#8a6f52"/>
+  <rect x="47" y="40" width="5" height="6" rx="2" fill="#8a6f52"/>
+</svg>

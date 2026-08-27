@@ -28,6 +28,7 @@ export function rapidFireCapacity(durationMs: number): number {
 }
 
 const TRAITS: StyleTraits = {
+  comfortableSlideMs: RAPID_MIN_SLIDE_MS,
   minSlideMs: RAPID_MIN_SLIDE_MS,
   idealPerSecond: 5,
   selectivity: 0, // the whole set — that's the point
@@ -38,8 +39,7 @@ const TRAITS: StyleTraits = {
 };
 
 export function buildRapidFire(photos: SequencePhoto[], ctx: TemplateContext): Timeline {
-  const capacity = rapidFireCapacity(ctx.durationMs);
-  const slots = editorialSlots(photos, ctx, TRAITS, capacity);
+  const slots = editorialSlots(photos, ctx, TRAITS, rapidFireCapacity(ctx.durationMs));
   const sequence = slots.map((s) => s.photos[0]);
 
   // Opener and closer hold long enough to read; everything else is a flash.

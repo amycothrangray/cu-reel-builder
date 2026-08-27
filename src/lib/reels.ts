@@ -7,6 +7,7 @@ import type { Timeline } from './engine/types';
 import { buildTimeline } from './engine/buildReel';
 import { analyzeBeats, decodeAudio } from './audio/beats';
 import { sliceMusicAnalysis } from './audio/segments';
+import { trackRebuild } from './rebuildStatus';
 
 export async function getBrand(): Promise<BrandConfig> {
   return (await db.brand.get('brand')) ?? defaultBrand();
@@ -106,6 +107,14 @@ export async function generateVersion(
   templateId: TemplateId,
   seed?: number,
 ): Promise<ReelVersion> {
+  return trackRebuild(() => generateVersionInner(reelId, templateId, seed));
+}
+
+async function generateVersionInner(
+  reelId: string,
+  templateId: TemplateId,
+  seed?: number,
+): Promise<ReelVersion> {
   const reel = await db.reels.get(reelId);
   if (!reel) throw new Error('Reel not found');
   const photos = await db.photos.where('reelId').equals(reelId).toArray();
@@ -144,6 +153,10 @@ export async function generateVersion(
  * order, template) while keeping its identity. Other versions are untouched.
  */
 export async function rebuildActiveVersion(reelId: string): Promise<void> {
+  return trackRebuild(() => rebuildActiveVersionInner(reelId));
+}
+
+async function rebuildActiveVersionInner(reelId: string): Promise<void> {
   const reel = await db.reels.get(reelId);
   if (!reel || !reel.templateId) return;
   const active = reel.versions.find((v) => v.id === reel.activeVersionId);

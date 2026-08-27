@@ -28,6 +28,7 @@ const personPhoto = (person: number, over: Partial<SequencePhoto> = {}): Sequenc
   });
 
 const TRAITS: StyleTraits = {
+  comfortableSlideMs: 1500,
   minSlideMs: 900,
   idealPerSecond: 0.59,
   selectivity: 0.5,
@@ -44,6 +45,7 @@ const ctx = (over: Partial<PlanContext> = {}): PlanContext => ({
   fixedOrder: false,
   intensity: [],
   capacity: 13,
+  comfortableCapacity: 8,
   ...over,
 });
 

@@ -18,22 +18,65 @@ export interface TemplateDefinition {
   description: string;
   pace: string;
   idealFor: string;
-  /** Shortest slide this style allows — sets its photo capacity. */
+  /** Shortest slide this style allows — the absolute physical floor. */
   minSlideMs: number;
+  /**
+   * The pace this style actually promises. The engine never crams photos
+   * faster than this on its own — extra photos wait for a longer reel or a
+   * faster style rather than everything speeding up.
+   */
+  comfortableSlideMs: number;
   /** Typical photos the style chooses on its own, per second of reel. */
   idealPerSecond: number;
   build: (photos: SequencePhoto[], ctx: TemplateContext) => Timeline;
 }
 
-/** Most photos this template can show in a reel of the given length. */
+/** Absolute maximum photos that physically fit (may feel rushed). */
 export function templateCapacity(template: TemplateDefinition, durationMs: number): number {
   if (template.id === 'rapid-fire') return rapidFireCapacity(durationMs);
   return Math.max(3, Math.floor(durationMs / template.minSlideMs));
 }
 
+/** Photos that fit at this style's promised pace — the number that matters. */
+export function templateComfortableCapacity(
+  template: TemplateDefinition,
+  durationMs: number,
+): number {
+  if (template.id === 'rapid-fire') return rapidFireCapacity(durationMs);
+  return Math.max(3, Math.floor(durationMs / template.comfortableSlideMs));
+}
+
+export interface PacingReport {
+  photoCount: number;
+  perPhotoMs: number;
+  comfortableCapacity: number;
+  physicalCapacity: number;
+  /** True when the reel is running faster than the style promises. */
+  rushed: boolean;
+  /** Shortest reel length (seconds) that would hold this many comfortably. */
+  neededSec: number | null;
+}
+
+/** How this many photos actually paces in a reel of this length. */
+export function pacingFor(
+  template: TemplateDefinition,
+  durationMs: number,
+  photoCount: number,
+): PacingReport {
+  const comfortableCapacity = templateComfortableCapacity(template, durationMs);
+  const physicalCapacity = templateCapacity(template, durationMs);
+  const perPhotoMs = photoCount > 0 ? durationMs / photoCount : durationMs;
+  const rushed = photoCount > comfortableCapacity;
+  const neededSec = rushed
+    ? [12, 15].find((sec) => templateComfortableCapacity(template, sec * 1000) >= photoCount) ?? null
+    : null;
+  return { photoCount, perPhotoMs, comfortableCapacity, physicalCapacity, rushed, neededSec };
+}
+
 export const TEMPLATES: TemplateDefinition[] = [
   {
     id: 'signature-energy',
+    comfortableSlideMs: 1500,
     minSlideMs: 900,
     idealPerSecond: 0.59,
     name: 'Signature Energy',
@@ -44,6 +87,7 @@ export const TEMPLATES: TemplateDefinition[] = [
   },
   {
     id: 'cinematic-story',
+    comfortableSlideMs: 2500,
     minSlideMs: 1600,
     idealPerSecond: 0.38,
     name: 'Cinematic Story',
@@ -54,6 +98,7 @@ export const TEMPLATES: TemplateDefinition[] = [
   },
   {
     id: 'quick-cut',
+    comfortableSlideMs: 850,
     minSlideMs: 450,
     idealPerSecond: 0.95,
     name: 'Quick Cut',
@@ -64,6 +109,7 @@ export const TEMPLATES: TemplateDefinition[] = [
   },
   {
     id: 'rapid-fire',
+    comfortableSlideMs: 120,
     minSlideMs: 120,
     idealPerSecond: 5.0,
     name: 'Rapid Fire',
@@ -74,6 +120,7 @@ export const TEMPLATES: TemplateDefinition[] = [
   },
   {
     id: 'editorial-minimal',
+    comfortableSlideMs: 2100,
     minSlideMs: 1400,
     idealPerSecond: 0.45,
     name: 'Editorial Minimal',
@@ -84,6 +131,7 @@ export const TEMPLATES: TemplateDefinition[] = [
   },
   {
     id: 'photo-story',
+    comfortableSlideMs: 1800,
     minSlideMs: 900,
     idealPerSecond: 0.53,
     name: 'Photo Story',

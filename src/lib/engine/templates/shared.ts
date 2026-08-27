@@ -35,9 +35,16 @@ export function editorialSlots(
   photos: SequencePhoto[],
   ctx: TemplateContext,
   traits: import('../../editorial/plan').StyleTraits,
-  capacity: number,
+  /** Styles with bespoke timing (Rapid Fire) supply their own ceiling. */
+  capacityOverride?: number,
 ): import('../../editorial/plan').PlanSlot[] {
   const purpose = ctx.purpose ?? 'photography';
+  const capacity =
+    capacityOverride ?? Math.max(3, Math.floor(ctx.durationMs / traits.minSlideMs));
+  const comfortableCapacity = Math.min(
+    capacity,
+    Math.max(3, Math.floor(ctx.durationMs / traits.comfortableSlideMs)),
+  );
   const plan = planSequence(photos, traits, {
     purpose,
     durationMs: ctx.durationMs,
@@ -45,6 +52,7 @@ export function editorialSlots(
     fixedOrder: ctx.fixedOrder ?? false,
     intensity: ctx.intensity ?? [],
     capacity,
+    comfortableCapacity,
   });
   // Second-pass Reel Critic: don't present the first construction —
   // evaluate it and revise before it becomes a version.

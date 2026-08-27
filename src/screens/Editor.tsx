@@ -16,7 +16,8 @@ import { InstagramAudioModal } from '../components/InstagramAudioModal';
 import { Modal } from '../components/Modal';
 import { loadResources, type LoadedResources } from '../lib/engine/resources';
 import { ReelPlayer } from '../lib/engine/preview';
-import { TEMPLATES, getTemplate, templateCapacity } from '../lib/engine/templates';
+import { TEMPLATES, getTemplate, pacingFor } from '../lib/engine/templates';
+import { useRebuildStatus } from '../lib/rebuildStatus';
 import { useBlobUrl } from '../components/hooks';
 import { useToasts } from '../components/toast';
 import type { ReelDuration, ReelPurpose, ReelRecord, TemplateId } from '../lib/types';
@@ -105,6 +106,8 @@ export function EditorScreen() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const playerRef = useRef<ReelPlayer | null>(null);
   const [playing, setPlaying] = useState(false);
+  const [ended, setEnded] = useState(false);
+  const [elapsedMs, setElapsedMs] = useState(0);
   const [busy, setBusy] = useState(false);
   const [igModalOpen, setIgModalOpen] = useState(false);
   const [styleChooserOpen, setStyleChooserOpen] = useState(false);
@@ -116,6 +119,8 @@ export function EditorScreen() {
     [reelId],
   );
   const music = useLiveQuery(() => db.music.orderBy('addedAt').reverse().toArray(), []);
+  // Is the preview showing the current settings, or still catching up?
+  const rebuilding = useRebuildStatus((s) => s.pending > 0);
 
   const activeVersion = reel?.versions.find((v) => v.id === reel.activeVersionId) ?? null;
   const timeline = activeVersion?.timeline ?? null;
@@ -153,8 +158,15 @@ export function EditorScreen() {
         localPlayer.destroy();
         return;
       }
+      localPlayer.onTime = (t) => setElapsedMs(t);
+      localPlayer.onEnded = () => {
+        setPlaying(false);
+        setEnded(true);
+      };
       playerRef.current = localPlayer;
       setPlaying(false);
+      setEnded(false);
+      setElapsedMs(0);
     })();
     return () => {
       disposed = true;
@@ -209,6 +221,30 @@ export function EditorScreen() {
     }
   };
 
+  const togglePlay = () => {
+    const p = playerRef.current;
+    if (!p) return;
+    if (p.playing) {
+      p.pause();
+      setPlaying(false);
+    } else {
+      // Replaying from the end restarts at the top.
+      if (p.ended) setElapsedMs(0);
+      p.play();
+      setPlaying(true);
+      setEnded(false);
+    }
+  };
+
+  const template = reel.templateId ? getTemplate(reel.templateId) : null;
+  const pacing = template
+    ? pacingFor(template, reel.durationSec * 1000, stripPhotoIds.length)
+    : null;
+
+  const previewStatus = rebuilding
+    ? 'Updating preview…'
+    : `${activeVersion.label} · up to date`;
+
   return (
     <div>
       <div className="page-header">
@@ -225,6 +261,15 @@ export function EditorScreen() {
           }}
         />
         <div className="spacer" />
+        <div style={{ textAlign: 'right', marginRight: 4 }}>
+          <div style={{ fontFamily: 'var(--font-display)', fontSize: 19, lineHeight: 1.2 }}>
+            {stripPhotoIds.length} photos · {reel.durationSec}.0s
+          </div>
+          <div className="faint">
+            {pacing ? `~${(pacing.perPhotoMs / 1000).toFixed(1)}s each` : ''}
+            {template ? ` · ${template.name}` : ''}
+          </div>
+        </div>
         <Link to={`/reel/${reel.id}/review`} className="btn btn-ghost">
           Photos
         </Link>
@@ -251,19 +296,9 @@ export function EditorScreen() {
 
         {/* Preview */}
         <div>
-          <div className="reel-frame" onClick={() => {
-            const p = playerRef.current;
-            if (!p) return;
-            if (p.playing) {
-              p.pause();
-              setPlaying(false);
-            } else {
-              p.play();
-              setPlaying(true);
-            }
-          }}>
+          <div className="reel-frame" onClick={togglePlay}>
             <canvas ref={canvasRef} />
-            {!playing && (
+            {!playing && !ended && (
               <div
                 style={{
                   position: 'absolute',
@@ -279,6 +314,49 @@ export function EditorScreen() {
                 ▶
               </div>
             )}
+            {ended && (
+              <div
+                style={{
+                  position: 'absolute',
+                  inset: 0,
+                  display: 'grid',
+                  placeItems: 'center',
+                  alignContent: 'center',
+                  gap: 10,
+                  background: 'rgba(13,12,10,0.72)',
+                  color: '#fff',
+                  pointerEvents: 'none',
+                }}
+              >
+                <div style={{ fontFamily: 'var(--font-display)', fontSize: 21 }}>
+                  End of reel
+                </div>
+                <div style={{ fontSize: 13, opacity: 0.85 }}>
+                  {stripPhotoIds.length} photos · {reel.durationSec}.0s
+                </div>
+                <div className="btn btn-secondary btn-sm" style={{ pointerEvents: 'none' }}>
+                  ↺ Replay
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Playhead: always know where you are and when it's over. */}
+          <div className="progressbar" style={{ marginTop: 8 }}>
+            <div
+              style={{
+                width: `${Math.min(100, (elapsedMs / (reel.durationSec * 1000)) * 100)}%`,
+                transition: playing ? 'none' : 'width 0.2s ease',
+              }}
+            />
+          </div>
+          <div className="row" style={{ marginTop: 6 }}>
+            <span className="faint">
+              {(Math.min(elapsedMs, reel.durationSec * 1000) / 1000).toFixed(1)}s /{' '}
+              {reel.durationSec}.0s
+            </span>
+            <div className="spacer" />
+            <span className="faint">{previewStatus}</span>
           </div>
 
           {/* Versions */}
@@ -304,6 +382,53 @@ export function EditorScreen() {
 
         {/* Controls */}
         <div className="stack-v">
+          {pacing?.rushed && template && (
+            <div
+              className="panel"
+              style={{ background: 'var(--warn-soft)', borderColor: 'var(--warn)', padding: 14 }}
+            >
+              <strong style={{ fontSize: 14.5 }}>
+                {stripPhotoIds.length} photos in {reel.durationSec}s is ~
+                {(pacing.perPhotoMs / 1000).toFixed(1)}s each — faster than{' '}
+                {template.name}’s {template.pace}.
+              </strong>
+              <p className="muted" style={{ fontSize: 13.5, margin: '6px 0 10px' }}>
+                These are photos you added, so they all stay in. Give them room, or
+                pick a style built for this pace.
+              </p>
+              <div className="row wrap">
+                {pacing.neededSec && (
+                  <button
+                    className="btn btn-secondary btn-sm"
+                    onClick={() => void patchAndRebuild({ durationSec: pacing.neededSec as ReelDuration })}
+                  >
+                    Use {pacing.neededSec}s
+                  </button>
+                )}
+                <button
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => {
+                    void touchReel(reel.id, { templateId: 'quick-cut' }).then(() =>
+                      rebuildActiveVersion(reel.id),
+                    );
+                  }}
+                >
+                  Switch to Quick Cut
+                </button>
+                <button
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => {
+                    void touchReel(reel.id, { templateId: 'rapid-fire' }).then(() =>
+                      rebuildActiveVersion(reel.id),
+                    );
+                  }}
+                >
+                  Switch to Rapid Fire
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Photo strip */}
           <div className="panel">
             <h3 style={{ marginBottom: 10 }}>Photo order</h3>
@@ -428,25 +553,25 @@ export function EditorScreen() {
                   </button>
                 ))}
               </div>
-              {reel.templateId && (
+              {pacing && template && (
                 <span className="hint">
                   {(() => {
-                    const cap = templateCapacity(getTemplate(reel.templateId), reel.durationSec * 1000);
                     const included = photos.filter((p) => p.included).length;
-                    const showing = stripPhotoIds.length;
-                    // With a manual order, anything cut is a physical limit;
-                    // otherwise the edit is selective by design.
+                    const showing = pacing.photoCount;
+                    const comfy = pacing.comfortableCapacity;
                     if (reel.manualOrder) {
                       const cut = Math.max(0, Math.min(reel.manualOrder.length, included) - showing);
                       return (
-                        `Showing ${showing} photos in your order — holds up to ${cap} at ${reel.durationSec}s.` +
+                        `Showing ${showing} photos in your order at ~${(pacing.perPhotoMs / 1000).toFixed(1)}s each. ` +
+                        `${template.name} sits best with ${comfy} at ${reel.durationSec}s.` +
                         (cut > 0
-                          ? ` ${cut} more don’t fit; pick a longer length or a faster style like Rapid Fire.`
+                          ? ` ${cut} more don’t fit at all; pick a longer length or Rapid Fire.`
                           : '')
                       );
                     }
                     return (
-                      `Showing ${showing} of ${included} included photos (holds up to ${cap} at ${reel.durationSec}s). ` +
+                      `Showing ${showing} of ${included} included photos at this style’s pace ` +
+                      `(~${(pacing.perPhotoMs / 1000).toFixed(1)}s each; ${comfy} fit comfortably at ${reel.durationSec}s). ` +
                       `A tight edit is deliberate — use “Add to reel” on any photo that must appear.`
                     );
                   })()}

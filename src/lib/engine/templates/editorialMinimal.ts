@@ -15,6 +15,7 @@ import {
 import { realizeSlots } from './realize';
 
 const TRAITS: StyleTraits = {
+  comfortableSlideMs: 2100,
   minSlideMs: 1400,
   idealPerSecond: 0.45,
   selectivity: 0.9, // the most curated style — capacity is not a target
@@ -29,8 +30,7 @@ export function buildEditorialMinimal(
   ctx: TemplateContext,
 ): Timeline {
   const rand = mulberry32(ctx.seed);
-  const capacity = Math.max(3, Math.floor(ctx.durationMs / TRAITS.minSlideMs));
-  const slots = editorialSlots(photos, ctx, TRAITS, capacity);
+  const slots = editorialSlots(photos, ctx, TRAITS);
 
   let sinceMatte = 0;
   const clips = realizeSlots(slots, ctx, {

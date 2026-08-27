@@ -41,7 +41,17 @@ session, choose the vibe, get a polished 9:16 MP4 — no video editing required.
   reference is never embedded in the export, and Reel Studio never claims a
   song is available on Instagram — Instagram remains the source of truth.
 - **Versioning** — "Try Another Edit" creates a new arrangement as a new
-  version; earlier versions are never destroyed.
+  version (in the same style or any other); earlier versions are never
+  destroyed.
+- **An honest preview** — the editor always shows how many photos are in the
+  reel, its length, the per-photo pace, a playhead, and whether the preview
+  is up to date or still rebuilding. Playback stops at the end with an
+  explicit "End of reel · Replay" — it never loops.
+- **Pace is a promise, not a variable** — each style has a comfortable pace
+  as well as a physical floor. Too many photos for the time slot means fewer
+  photos, never a faster reel: the engine stops selecting at the style's
+  pace, and photos *you* added are always kept with a plain warning plus
+  one-tap fixes (longer reel, or a style built for that speed).
 - **Export** — 1080×1920 MP4 (H.264 + AAC) rendered deterministically in the
   browser via WebCodecs, with a preflight checklist (safety review, missing
   images, text bounds, fonts, audio) before the button unlocks.

@@ -15,6 +15,7 @@ import {
 import { realizeSlots } from './realize';
 
 const TRAITS: StyleTraits = {
+  comfortableSlideMs: 1500,
   minSlideMs: 900,
   idealPerSecond: 0.59,
   selectivity: 0.5,
@@ -29,8 +30,7 @@ export function buildSignatureEnergy(
   ctx: TemplateContext,
 ): Timeline {
   const rand = mulberry32(ctx.seed);
-  const capacity = Math.max(3, Math.floor(ctx.durationMs / TRAITS.minSlideMs));
-  const slots = editorialSlots(photos, ctx, TRAITS, capacity);
+  const slots = editorialSlots(photos, ctx, TRAITS);
 
   const clips = realizeSlots(slots, ctx, {
     minClipMs: 700,

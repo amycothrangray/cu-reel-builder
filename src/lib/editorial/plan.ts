@@ -23,6 +23,8 @@ export type EditorialPurpose = 'photography' | 'school';
 
 export interface StyleTraits {
   minSlideMs: number;
+  /** The pace the style promises — the engine won't crowd past this. */
+  comfortableSlideMs: number;
   idealPerSecond: number;
   /** 0 = use everything eligible (Rapid Fire); 1 = highly curated. */
   selectivity: number;
@@ -59,8 +61,14 @@ export interface PlanContext {
   fixedOrder: boolean;
   /** Music energy curve (0..1 per 500ms window); empty without music. */
   intensity: number[];
-  /** Physical capacity for this style + duration. */
+  /** Absolute maximum slots that physically fit (may feel rushed). */
   capacity: number;
+  /**
+   * Slots that fit at the style's promised pace. Automatic selection never
+   * exceeds this: too many photos for the time slot means fewer photos, not
+   * a faster reel. Only explicit user choices can push past it.
+   */
+  comfortableCapacity: number;
 }
 
 export interface EditorialPlan {
@@ -123,6 +131,9 @@ export function editorialTarget(
     // Rapid styles show the whole set.
     return Math.min(ctx.capacity, available);
   }
+  // Required photos are honored past the comfortable pace (never dropped);
+  // everything the engine chooses itself respects the style's rhythm.
+  const paceCap = Math.max(ctx.comfortableCapacity, Math.min(requiredCount, ctx.capacity));
   const ideal = Math.round((ctx.durationMs / 1000) * traits.idealPerSecond);
   if (ctx.purpose === 'photography') {
     // Selective: only photos that genuinely earn a slot. A hero bar scaled
@@ -131,10 +142,15 @@ export function editorialTarget(
     const strong = photos.filter(
       (p) => !prep.shadowed.has(p.id) && !p.required && (prep.profiles.get(p.id)?.hero ?? 0) >= bar,
     ).length;
-    return Math.max(3, Math.min(ctx.capacity, ideal, requiredCount + strong));
+    const desired = Math.min(paceCap, ideal, requiredCount + strong);
+    // Selective must not mean sparse: when few photos clear the bar (or the
+    // set is simply even), still build a reel of reasonable density from the
+    // best available rather than collapsing to the minimum.
+    const floor = Math.min(paceCap, available, Math.max(3, Math.round(ideal * 0.7)));
+    return Math.max(3, desired, floor);
   }
   // School: breadth-leaning — more moments, more faces — but still an edit.
-  return Math.max(3, Math.min(ctx.capacity, Math.round(ideal * 1.15), available));
+  return Math.max(3, Math.min(paceCap, Math.round(ideal * 1.15), available));
 }
 
 function selectPhotos(

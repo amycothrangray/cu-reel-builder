@@ -15,6 +15,9 @@ export class ReelPlayer {
   private audioEl: HTMLAudioElement | null = null;
   private audioUrl: string | null = null;
   onTime: ((tMs: number) => void) | null = null;
+  /** Fired once when the reel reaches its end (it does not loop). */
+  onEnded: (() => void) | null = null;
+  private _ended = false;
 
   constructor(
     canvas: HTMLCanvasElement,
@@ -47,9 +50,18 @@ export class ReelPlayer {
     return this._playing ? performance.now() - this.startedAt : this.pausedAt;
   }
 
+  /** True once playback has reached the end and stopped. */
+  get ended(): boolean {
+    return this._ended;
+  }
+
   play(): void {
     if (this._playing) return;
-    if (this.pausedAt >= this.timeline.durationMs - 30) this.pausedAt = 0;
+    // Replaying after the end starts over from the top.
+    if (this._ended || this.pausedAt >= this.timeline.durationMs - 30) {
+      this.pausedAt = 0;
+    }
+    this._ended = false;
     this._playing = true;
     this.startedAt = performance.now() - this.pausedAt;
     if (this.audioEl) {
@@ -58,15 +70,18 @@ export class ReelPlayer {
     }
     const tick = () => {
       if (!this._playing) return;
-      let t = performance.now() - this.startedAt;
+      const t = performance.now() - this.startedAt;
       if (t >= this.timeline.durationMs) {
-        // Loop the preview.
-        this.startedAt = performance.now();
-        t = 0;
-        if (this.audioEl) {
-          this.audioEl.currentTime = this.audioOffsetSec;
-          void this.audioEl.play().catch(() => undefined);
-        }
+        // The reel ends — it never loops, so you always know it's over.
+        this.renderAt(this.timeline.durationMs - 1);
+        this.onTime?.(this.timeline.durationMs);
+        this.pausedAt = this.timeline.durationMs;
+        this._playing = false;
+        this._ended = true;
+        this.audioEl?.pause();
+        cancelAnimationFrame(this.raf);
+        this.onEnded?.();
+        return;
       }
       this.renderAt(t);
       this.onTime?.(t);
@@ -86,6 +101,7 @@ export class ReelPlayer {
   seek(tMs: number): void {
     const t = Math.max(0, Math.min(tMs, this.timeline.durationMs - 1));
     this.pausedAt = t;
+    this._ended = false;
     if (this._playing) {
       this.startedAt = performance.now() - t;
       if (this.audioEl) this.audioEl.currentTime = this.audioOffsetSec + t / 1000;

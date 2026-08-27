@@ -15,6 +15,7 @@ import {
 import { realizeSlots } from './realize';
 
 const TRAITS: StyleTraits = {
+  comfortableSlideMs: 850,
   minSlideMs: 450,
   idealPerSecond: 0.95,
   selectivity: 0.3,
@@ -26,8 +27,7 @@ const TRAITS: StyleTraits = {
 
 export function buildQuickCut(photos: SequencePhoto[], ctx: TemplateContext): Timeline {
   const rand = mulberry32(ctx.seed);
-  const capacity = Math.max(3, Math.floor(ctx.durationMs / TRAITS.minSlideMs));
-  const slots = editorialSlots(photos, ctx, TRAITS, capacity);
+  const slots = editorialSlots(photos, ctx, TRAITS);
 
   const clips = realizeSlots(slots, ctx, {
     minClipMs: 420,
