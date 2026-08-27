@@ -2,7 +2,9 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { Link, useParams } from 'react-router-dom';
 import { blobKey, db, getBlob, putBlob, trackUsage } from '../lib/db';
-import { getBrand, touchReel } from '../lib/reels';
+import { getBrand, musicAnalysisForReel, touchReel } from '../lib/reels';
+import { formatTimestamp, syncCue, type SyncCue } from '../lib/audio/segments';
+import { useBlobUrl } from '../components/hooks';
 import { loadResources } from '../lib/engine/resources';
 import { renderFrame } from '../lib/engine/renderFrame';
 import { selectProvider } from '../lib/engine/export/localProvider';
@@ -24,6 +26,7 @@ export function ExportScreen() {
   const [findings, setFindings] = useState<PreflightFinding[] | null>(null);
   const [progress, setProgress] = useState<RenderProgress | null>(null);
   const [result, setResult] = useState<{ url: string; ext: string } | null>(null);
+  const [cue, setCue] = useState<SyncCue | null>(null);
 
   const reel = useLiveQuery(() => (reelId ? db.reels.get(reelId) : undefined), [reelId]);
   const photos = useLiveQuery(
@@ -77,6 +80,14 @@ export function ExportScreen() {
           logoAvailable,
         }),
       );
+
+      // Instagram sync marker: which photo the first big musical hit lands on.
+      if (reel.instagramAudio?.referenceAssetKey) {
+        const music = await musicAnalysisForReel(reel);
+        if (alive) setCue(syncCue(timeline, music.strongBeats));
+      } else {
+        setCue(null);
+      }
     })();
     return () => {
       alive = false;
@@ -213,7 +224,9 @@ export function ExportScreen() {
 
           {result ? (
             <div className="panel" style={{ background: 'var(--ok-soft)', borderColor: 'var(--ok)' }}>
-              <h3 style={{ color: 'var(--ok)', marginBottom: 8 }}>Your reel is ready</h3>
+              <h3 style={{ color: 'var(--ok)', marginBottom: 8 }}>
+                {reel.instagramAudio ? 'Your silent reel is ready' : 'Your reel is ready'}
+              </h3>
               <div className="row wrap">
                 <a className="btn btn-primary" href={result.url} download={fileName}>
                   Download {fileName}
@@ -228,11 +241,96 @@ export function ExportScreen() {
             </div>
           ) : (
             <button className="btn btn-primary btn-lg" disabled={!canExport} onClick={() => void doExport()}>
-              {progress ? 'Rendering…' : 'Export Reel'}
+              {progress
+                ? 'Rendering…'
+                : reel.instagramAudio
+                  ? 'Export for Instagram'
+                  : 'Export Reel'}
             </button>
+          )}
+
+          {reel.instagramAudio && (
+            <InstagramPostingCard
+              songTitle={reel.instagramAudio.songTitle}
+              artist={reel.instagramAudio.artist}
+              startSec={reel.instagramAudio.startSec}
+              durationSec={reel.durationSec}
+              cue={cue}
+            />
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+/**
+ * The Instagram posting card: everything needed to recreate the intended
+ * synchronization inside Instagram. This stays with the reel permanently.
+ */
+function InstagramPostingCard({
+  songTitle,
+  artist,
+  startSec,
+  durationSec,
+  cue,
+}: {
+  songTitle: string;
+  artist: string;
+  startSec: number;
+  durationSec: number;
+  cue: SyncCue | null;
+}) {
+  const cueThumbUrl = useBlobUrl(cue ? blobKey.thumb(cue.photoId) : null);
+  const search = artist ? `${songTitle} — ${artist}` : songTitle;
+  return (
+    <div className="panel" style={{ borderColor: 'var(--accent)', borderWidth: 2 }}>
+      <h3 style={{ marginBottom: 4 }}>Add this audio on Instagram</h3>
+      <div style={{ fontFamily: 'var(--font-display)', fontSize: 20 }}>
+        🎵 {songTitle}
+        {artist ? <span style={{ color: 'var(--ink-soft)' }}> · {artist}</span> : null}
+      </div>
+      <div className="row wrap" style={{ margin: '10px 0 14px', gap: 18 }}>
+        <div>
+          <div style={{ fontFamily: 'var(--font-display)', fontSize: 26 }}>
+            {formatTimestamp(startSec)}
+          </div>
+          <div className="faint">start the song here</div>
+        </div>
+        <div>
+          <div style={{ fontFamily: 'var(--font-display)', fontSize: 26 }}>{durationSec}s</div>
+          <div className="faint">reel length</div>
+        </div>
+        {cue && (
+          <div className="row" style={{ gap: 10 }}>
+            {cueThumbUrl && (
+              <img
+                src={cueThumbUrl}
+                alt=""
+                style={{ width: 44, height: 44, borderRadius: 8, objectFit: 'cover' }}
+              />
+            )}
+            <div>
+              <div style={{ fontWeight: 600, fontSize: 13.5 }}>Sync check</div>
+              <div className="faint" style={{ maxWidth: 220 }}>
+                The first big musical hit lands as photo {cue.photoNumber} appears (
+                {formatTimestamp(cue.tMs / 1000)} in). Off by a beat? Nudge Instagram’s slider.
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+      <ol className="muted" style={{ fontSize: 13.5, paddingLeft: 18, margin: 0, lineHeight: 1.7 }}>
+        <li>Upload this reel to Instagram</li>
+        <li>Tap <strong>Add audio</strong> and search “{search}”</li>
+        <li>Move the song to <strong>{formatTimestamp(startSec)}</strong></li>
+        <li>Preview — confirm the first cut lines up{cue ? ` on photo ${cue.photoNumber}` : ''}</li>
+        <li>Post</li>
+      </ol>
+      <p className="faint" style={{ marginTop: 10 }}>
+        Instagram is the source of truth for which audio is available to your
+        account. This card stays saved with the reel.
+      </p>
     </div>
   );
 }

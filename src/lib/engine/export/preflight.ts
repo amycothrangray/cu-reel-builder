@@ -89,7 +89,14 @@ export function runPreflight(input: PreflightInput): PreflightFinding[] {
   );
 
   // 5. Audio present when selected.
-  if (reel.musicAssetKey) {
+  if (reel.instagramAudio) {
+    // Instagram Audio: a silent export is the correct output by design.
+    findings.push({
+      id: 'audio-instagram',
+      level: 'ok',
+      message: `Silent export by design — add “${reel.instagramAudio.songTitle}${reel.instagramAudio.artist ? ` — ${reel.instagramAudio.artist}` : ''}” on Instagram.`,
+    });
+  } else if (reel.musicAssetKey) {
     findings.push(
       input.audioAvailable
         ? { id: 'audio-ok', level: 'ok', message: `Music: ${reel.musicName ?? 'selected track'}.` }

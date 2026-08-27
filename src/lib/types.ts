@@ -150,6 +150,17 @@ export type ReelDuration = 9 | 12 | 15;
  */
 export type ReelPurpose = 'photography' | 'school' | 'auto';
 
+/** Instagram Audio Reference — metadata the user needs to recreate sync. */
+export interface InstagramAudioPlan {
+  songTitle: string;
+  artist: string;
+  /** Temporary reference audio (timing/preview only, never exported). */
+  referenceAssetKey: string | null;
+  referenceName: string | null;
+  /** Where in the official track the reel starts — the critical number. */
+  startSec: number;
+}
+
 export interface ReelTextConfig {
   title: string;
   caption: string;
@@ -175,6 +186,13 @@ export interface ReelRecord {
   text: ReelTextConfig;
   musicAssetKey: string | null;
   musicName: string | null;
+  /**
+   * Instagram Audio workflow: the reel is edited to a song the user will add
+   * natively inside Instagram. A temporary reference track drives timing and
+   * preview only — it is never embedded in an Instagram-targeted export.
+   * Instagram remains the source of truth for what audio is available.
+   */
+  instagramAudio?: InstagramAudioPlan | null;
   versions: ReelVersion[];
   activeVersionId: string | null;
   /**

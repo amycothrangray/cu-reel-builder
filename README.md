@@ -30,8 +30,16 @@ session, choose the vibe, get a polished 9:16 MP4 — no video editing required.
 - **Brand system** — upload your real logo and licensed font files (WOFF /
   WOFF2 / OTF / TTF), set colors, default CTA, website and Instagram handle.
   Every reel uses them automatically.
-- **Music** — upload tracks or reuse stored ones. Local beat detection aligns
-  meaningful cuts to the music without forcing every cut to a beat.
+- **Music, two ways** — *Reel Studio Music*: upload tracks you're licensed to
+  include and they're embedded in the MP4, with local beat/intensity analysis
+  timing the cuts. *Instagram Audio*: build the reel to a song you'll add
+  natively inside Instagram — provide a temporary reference track, pick the
+  exact song section on a waveform (with suggested sections), preview in
+  sync, then **Export for Instagram** produces a silent MP4 with identical
+  visual timing plus a posting card (song, artist, start timestamp, and a
+  visual sync check: "the first big hit lands as photo 4 appears"). The
+  reference is never embedded in the export, and Reel Studio never claims a
+  song is available on Instagram — Instagram remains the source of truth.
 - **Versioning** — "Try Another Edit" creates a new arrangement as a new
   version; earlier versions are never destroyed.
 - **Export** — 1080×1920 MP4 (H.264 + AAC) rendered deterministically in the

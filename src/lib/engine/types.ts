@@ -74,6 +74,14 @@ export interface TimelineAudio {
   name: string;
   gain: number; // linear, 1 = unity
   fadeOutMs: number;
+  /** Playback offset into the source track (Instagram section start). */
+  offsetSec?: number;
+  /**
+   * False for Instagram Audio references: the track drives preview and
+   * timing, but the export stays silent — the official song is added
+   * natively inside Instagram. Visual timing is identical either way.
+   */
+  embedInExport?: boolean;
 }
 
 export interface Timeline {

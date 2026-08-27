@@ -508,11 +508,23 @@ export function PhotoReviewScreen() {
         </div>
       )}
 
-      {selecting && selected.size > 0 && (
+      {selecting && (
         <div className="row wrap panel" style={{ marginBottom: 16, padding: 12 }}>
           <span className="muted" style={{ fontSize: 14 }}>
             {selected.size} selected
           </span>
+          <button
+            className="btn btn-ghost btn-sm"
+            onClick={() =>
+              setSelected(
+                selected.size === ready.length
+                  ? new Set()
+                  : new Set(ready.map((p) => p.id)),
+              )
+            }
+          >
+            {selected.size === ready.length ? 'Clear all' : 'Select all'}
+          </button>
           <div className="spacer" />
           <button className="btn btn-secondary btn-sm" onClick={() => void bulkReel(true)}>
             Add to reel

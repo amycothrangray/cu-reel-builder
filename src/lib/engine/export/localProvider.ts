@@ -109,7 +109,10 @@ export class LocalRenderProvider implements VideoGenerationProvider {
       // is unsupported on this browser).
       let audioSource: AudioBufferSource | null = null;
       let audioBuffer: AudioBuffer | null = null;
-      if (timeline.audio) {
+      // Instagram Audio references are never embedded — the export stays
+      // silent and the official song is added inside Instagram. Visual
+      // timing is identical with or without the audio track.
+      if (timeline.audio && timeline.audio.embedInExport !== false) {
         report(0.05, STAGES.audio);
         try {
           const blob = await getBlob(timeline.audio.assetKey);
@@ -242,7 +245,7 @@ export class MediaRecorderFallbackProvider implements VideoGenerationProvider {
 
       // Mix audio in via WebAudio when present.
       let audioCtx: AudioContext | null = null;
-      if (timeline.audio) {
+      if (timeline.audio && timeline.audio.embedInExport !== false) {
         const blob = await getBlob(timeline.audio.assetKey);
         if (blob) {
           audioCtx = new AudioContext();

@@ -102,14 +102,28 @@ export function buildTimeline(opts: BuildOptions): Timeline {
     fixedOrder = true;
   }
 
-  const audio: TimelineAudio | null = reel.musicAssetKey
+  // Instagram Audio: the reference drives preview and timing but is never
+  // embedded in the export — the official song is added inside Instagram.
+  const instagram = reel.instagramAudio;
+  const audio: TimelineAudio | null = instagram?.referenceAssetKey
     ? {
-        assetKey: reel.musicAssetKey,
-        name: reel.musicName ?? 'Track',
+        assetKey: instagram.referenceAssetKey,
+        name: `${instagram.songTitle} — ${instagram.artist} (reference)`,
         gain: 1,
-        fadeOutMs: 900,
+        fadeOutMs: 0,
+        offsetSec: instagram.startSec,
+        embedInExport: false,
       }
-    : null;
+    : reel.musicAssetKey
+      ? {
+          assetKey: reel.musicAssetKey,
+          name: reel.musicName ?? 'Track',
+          gain: 1,
+          fadeOutMs: 900,
+          offsetSec: 0,
+          embedInExport: true,
+        }
+      : null;
 
   const ctx: TemplateContext = {
     durationMs: reel.durationSec * 1000,

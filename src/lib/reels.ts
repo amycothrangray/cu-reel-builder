@@ -6,6 +6,7 @@ import { defaultBrand, type BrandConfig, type ReelRecord, type ReelVersion, type
 import type { Timeline } from './engine/types';
 import { buildTimeline } from './engine/buildReel';
 import { analyzeBeats, decodeAudio } from './audio/beats';
+import { sliceMusicAnalysis } from './audio/segments';
 
 export async function getBrand(): Promise<BrandConfig> {
   return (await db.brand.get('brand')) ?? defaultBrand();
@@ -43,18 +44,57 @@ export async function touchReel(reelId: string, patch: Partial<ReelRecord> = {})
   await db.reels.update(reelId, { ...patch, updatedAt: Date.now() });
 }
 
-export async function musicAnalysisForReel(
-  reel: ReelRecord,
-): Promise<{ beats: number[]; intensity: number[] }> {
-  if (!reel.musicAssetKey) return { beats: [], intensity: [] };
+export interface ReelMusic {
+  beats: number[];
+  strongBeats: number[];
+  intensity: number[];
+}
+
+const NO_MUSIC: ReelMusic = { beats: [], strongBeats: [], intensity: [] };
+
+/**
+ * Music timing for the reel. For Instagram Audio, the reference track's
+ * analysis is sliced to the chosen section and re-based to 0 — the edit is
+ * built against exactly the section the user will select inside Instagram.
+ */
+export async function musicAnalysisForReel(reel: ReelRecord): Promise<ReelMusic> {
+  const instagram = reel.instagramAudio;
+  const key = instagram?.referenceAssetKey ?? reel.musicAssetKey;
+  if (!key) return NO_MUSIC;
   try {
-    const blob = await getBlob(reel.musicAssetKey);
-    if (!blob) return { beats: [], intensity: [] };
-    const analysis = await analyzeBeats(reel.musicAssetKey, blob);
-    return { beats: analysis.beats, intensity: analysis.intensity };
+    const blob = await getBlob(key);
+    if (!blob) return NO_MUSIC;
+    const analysis = await analyzeBeats(key, blob);
+    if (instagram?.referenceAssetKey) {
+      return sliceMusicAnalysis(analysis, instagram.startSec * 1000, reel.durationSec * 1000);
+    }
+    return {
+      beats: analysis.beats,
+      strongBeats: analysis.strongBeats,
+      intensity: analysis.intensity,
+    };
   } catch {
-    return { beats: [], intensity: [] };
+    return NO_MUSIC;
   }
+}
+
+/** Set the Instagram Audio plan (clears embedded studio music — one source). */
+export async function setInstagramAudio(
+  reelId: string,
+  plan: import('./types').InstagramAudioPlan,
+): Promise<void> {
+  await db.reels.update(reelId, {
+    instagramAudio: plan,
+    musicAssetKey: null,
+    musicName: null,
+    updatedAt: Date.now(),
+  });
+  await rebuildActiveVersion(reelId);
+}
+
+export async function clearInstagramAudio(reelId: string): Promise<void> {
+  await db.reels.update(reelId, { instagramAudio: null, updatedAt: Date.now() });
+  await rebuildActiveVersion(reelId);
 }
 
 /**

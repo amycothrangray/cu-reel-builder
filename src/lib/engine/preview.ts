@@ -27,8 +27,11 @@ export class ReelPlayer {
     this.renderAt(0);
   }
 
+  private audioOffsetSec = 0;
+
   async loadAudio(): Promise<void> {
     if (!this.timeline.audio) return;
+    this.audioOffsetSec = this.timeline.audio.offsetSec ?? 0;
     const blob = await getBlob(this.timeline.audio.assetKey);
     if (!blob) return;
     this.audioUrl = URL.createObjectURL(blob);
@@ -50,7 +53,7 @@ export class ReelPlayer {
     this._playing = true;
     this.startedAt = performance.now() - this.pausedAt;
     if (this.audioEl) {
-      this.audioEl.currentTime = this.pausedAt / 1000;
+      this.audioEl.currentTime = this.audioOffsetSec + this.pausedAt / 1000;
       void this.audioEl.play().catch(() => undefined);
     }
     const tick = () => {
@@ -61,7 +64,7 @@ export class ReelPlayer {
         this.startedAt = performance.now();
         t = 0;
         if (this.audioEl) {
-          this.audioEl.currentTime = 0;
+          this.audioEl.currentTime = this.audioOffsetSec;
           void this.audioEl.play().catch(() => undefined);
         }
       }
@@ -85,7 +88,7 @@ export class ReelPlayer {
     this.pausedAt = t;
     if (this._playing) {
       this.startedAt = performance.now() - t;
-      if (this.audioEl) this.audioEl.currentTime = t / 1000;
+      if (this.audioEl) this.audioEl.currentTime = this.audioOffsetSec + t / 1000;
     } else {
       this.renderAt(t);
       this.onTime?.(t);

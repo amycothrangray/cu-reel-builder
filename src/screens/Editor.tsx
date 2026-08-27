@@ -9,7 +9,11 @@ import {
   removePhotosFromArrangement,
   touchReel,
   addMusicTrack,
+  clearInstagramAudio,
 } from '../lib/reels';
+import { formatTimestamp } from '../lib/audio/segments';
+import { InstagramAudioModal } from '../components/InstagramAudioModal';
+import { Modal } from '../components/Modal';
 import { loadResources, type LoadedResources } from '../lib/engine/resources';
 import { ReelPlayer } from '../lib/engine/preview';
 import { TEMPLATES, getTemplate, templateCapacity } from '../lib/engine/templates';
@@ -102,6 +106,8 @@ export function EditorScreen() {
   const playerRef = useRef<ReelPlayer | null>(null);
   const [playing, setPlaying] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [igModalOpen, setIgModalOpen] = useState(false);
+  const [styleChooserOpen, setStyleChooserOpen] = useState(false);
   const musicInputRef = useRef<HTMLInputElement>(null);
 
   const reel = useLiveQuery(() => (reelId ? db.reels.get(reelId) : undefined), [reelId]);
@@ -183,14 +189,14 @@ export function EditorScreen() {
     void patchAndRebuild({ manualOrder: order });
   };
 
-  const tryAnotherEdit = async () => {
-    if (!reel.templateId) return;
+  const tryAnotherEdit = async (templateId: TemplateId) => {
+    setStyleChooserOpen(false);
     setBusy(true);
     try {
       // Lock-aware: photos the user added stay in; a manual order stays in
       // order (only pacing/treatment vary); otherwise the engine rethinks
       // the sequence with a fresh seed. Earlier versions are never lost.
-      await generateVersion(reel.id, reel.templateId, Date.now() % 100_000);
+      await generateVersion(reel.id, templateId, Date.now() % 100_000);
       show(
         reel.manualOrder
           ? 'New take created — your photo order is kept; pacing and motion vary.'
@@ -286,7 +292,11 @@ export function EditorScreen() {
                 {v.label}
               </button>
             ))}
-            <button className="btn btn-secondary btn-sm" disabled={busy} onClick={() => void tryAnotherEdit()}>
+            <button
+              className="btn btn-secondary btn-sm"
+              disabled={busy}
+              onClick={() => setStyleChooserOpen(true)}
+            >
               {busy ? <span className="spinner" /> : '↻'} Try Another Edit
             </button>
           </div>
@@ -445,29 +455,66 @@ export function EditorScreen() {
             </div>
             <div className="field">
               <label>Music</label>
-              <select
-                value={reel.musicAssetKey ?? ''}
-                onChange={(e) => {
-                  const track = music?.find((m) => m.assetKey === e.target.value);
-                  void patchAndRebuild({
-                    musicAssetKey: track?.assetKey ?? null,
-                    musicName: track?.name ?? null,
-                  });
-                }}
-              >
-                <option value="">No music</option>
-                {music?.map((m) => (
-                  <option key={m.id} value={m.assetKey}>
-                    {m.name} ({Math.round(m.durationSec)}s)
-                  </option>
-                ))}
-              </select>
-              <button className="btn btn-secondary btn-sm" style={{ alignSelf: 'flex-start' }} onClick={() => musicInputRef.current?.click()}>
-                Upload a track
-              </button>
-              <span className="hint">
-                Use music you’re licensed to post. Cuts sync to the beat automatically.
-              </span>
+              {reel.instagramAudio ? (
+                <div
+                  className="panel"
+                  style={{ padding: 12, background: 'var(--paper-sunken)' }}
+                >
+                  <div style={{ fontWeight: 600, fontSize: 14.5 }}>
+                    🎵 {reel.instagramAudio.songTitle}
+                    {reel.instagramAudio.artist ? ` — ${reel.instagramAudio.artist}` : ''}
+                  </div>
+                  <div className="faint" style={{ margin: '2px 0 8px' }}>
+                    Instagram Audio Reference · starts at{' '}
+                    {formatTimestamp(reel.instagramAudio.startSec)} · export stays silent —
+                    add the official song when you post
+                  </div>
+                  <div className="row">
+                    <button className="btn btn-secondary btn-sm" onClick={() => setIgModalOpen(true)}>
+                      Edit section
+                    </button>
+                    <button
+                      className="btn btn-ghost btn-sm"
+                      onClick={() => void clearInstagramAudio(reel.id)}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <select
+                    value={reel.musicAssetKey ?? ''}
+                    onChange={(e) => {
+                      const track = music?.find((m) => m.assetKey === e.target.value);
+                      void patchAndRebuild({
+                        musicAssetKey: track?.assetKey ?? null,
+                        musicName: track?.name ?? null,
+                        instagramAudio: null,
+                      });
+                    }}
+                  >
+                    <option value="">No music</option>
+                    {music?.map((m) => (
+                      <option key={m.id} value={m.assetKey}>
+                        {m.name} ({Math.round(m.durationSec)}s)
+                      </option>
+                    ))}
+                  </select>
+                  <div className="row wrap">
+                    <button className="btn btn-secondary btn-sm" onClick={() => musicInputRef.current?.click()}>
+                      Upload a track
+                    </button>
+                    <button className="btn btn-secondary btn-sm" onClick={() => setIgModalOpen(true)}>
+                      Edit to Instagram Audio
+                    </button>
+                  </div>
+                  <span className="hint">
+                    Upload music you’re licensed to include, or build your reel to an
+                    Instagram song and add the official audio when you post.
+                  </span>
+                </>
+              )}
               <input
                 ref={musicInputRef}
                 type="file"
@@ -479,7 +526,11 @@ export function EditorScreen() {
                   await addMusicTrack(file);
                   const added = await db.music.orderBy('addedAt').reverse().first();
                   if (added) {
-                    await patchAndRebuild({ musicAssetKey: added.assetKey, musicName: added.name });
+                    await patchAndRebuild({
+                      musicAssetKey: added.assetKey,
+                      musicName: added.name,
+                      instagramAudio: null,
+                    });
                   }
                   show('Track added');
                 }}
@@ -488,6 +539,46 @@ export function EditorScreen() {
           </div>
         </div>
       </div>
+
+      {igModalOpen && <InstagramAudioModal reel={reel} onClose={() => setIgModalOpen(false)} />}
+
+      {styleChooserOpen && (
+        <Modal onClose={() => setStyleChooserOpen(false)}>
+          <h2 style={{ marginBottom: 6 }}>Try another edit</h2>
+          <p className="muted" style={{ fontSize: 13.5, marginBottom: 16 }}>
+            {reel.manualOrder
+              ? 'Your photos and order are kept — pacing, motion and treatments will vary.'
+              : (reel.requiredIds?.length ?? 0) > 0
+                ? 'Photos you added stay in; the sequence gets rethought.'
+                : 'The whole edit gets rethought — earlier versions are always saved.'}
+          </p>
+          <div className="stack-v" style={{ gap: 8 }}>
+            {reel.templateId && (
+              <button
+                className="btn btn-primary"
+                onClick={() => void tryAnotherEdit(reel.templateId!)}
+              >
+                Same style — {getTemplate(reel.templateId).name}
+              </button>
+            )}
+            {TEMPLATES.filter((t) => t.id !== reel.templateId).map((t) => (
+              <button
+                key={t.id}
+                className="btn btn-secondary"
+                style={{ justifyContent: 'flex-start' }}
+                onClick={() => {
+                  void touchReel(reel.id, { templateId: t.id }).then(() => tryAnotherEdit(t.id));
+                }}
+              >
+                {t.name}
+                <span className="faint" style={{ marginLeft: 8, fontWeight: 400 }}>
+                  {t.pace}
+                </span>
+              </button>
+            ))}
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }
