@@ -65,6 +65,13 @@ export interface AiInsight {
 export interface PhotoAnalysis {
   stats: ImageStats;
   faces: FaceBox[];
+  /**
+   * 128-d face descriptors parallel to `faces`, computed locally. Used only
+   * to recognize *recurring* people within this uploaded set (so a school
+   * reel shows many students, not the same three) and for restricted-child
+   * matching. Never used for demographic inference; never leaves the device.
+   */
+  descriptors?: number[][];
   phash: string; // 64-bit perceptual hash as hex
   classification: ClassificationResult;
   /** Composite quality score 0..1 used for auto-selection. */
@@ -137,6 +144,12 @@ export type TemplateId =
 
 export type ReelDuration = 9 | 12 | 15;
 
+/**
+ * What job the reel is doing. Purpose controls EDITORIAL PRIORITIES
+ * (selection, breadth, emphasis); Style controls PRESENTATION CHARACTER.
+ */
+export type ReelPurpose = 'photography' | 'school' | 'auto';
+
 export interface ReelTextConfig {
   title: string;
   caption: string;
@@ -164,8 +177,18 @@ export interface ReelRecord {
   musicName: string | null;
   versions: ReelVersion[];
   activeVersionId: string | null;
-  /** Manual photo order set by dragging; null = template decides. */
+  /**
+   * CONTENT lock: photos the user explicitly added. They must appear, but
+   * the engine still chooses the strongest order — choosing content is not
+   * volunteering to be the video editor.
+   */
+  requiredIds?: string[];
+  /**
+   * ORDER lock: set only by explicit manual reordering. When present, both
+   * the photo set and its order are honored exactly.
+   */
   manualOrder: string[] | null;
+  purpose?: ReelPurpose;
   exportedAt?: number;
 }
 

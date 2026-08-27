@@ -1,96 +1,59 @@
-// Template 4 — Editorial Minimal. Clean, sophisticated: neutral treatment,
-// generous negative space, elegant brand typography, deliberate pacing.
+// Template 4 — Editorial Minimal. Confidence through restraint: a small
+// curated set, gallery matting on the brand ground, stills that simply sit
+// there, elegant type. Doing less, deliberately.
 
-import { uid } from '../../ids';
-import { avoidFaceSlice, coverCrop, planTreatment, subjectRect } from '../layout';
-import { arrangePhotos, mulberry32, type SequencePhoto } from '../sequence';
-import type { Clip, Timeline } from '../types';
+import type { StyleTraits } from '../../editorial/plan';
+import type { SequencePhoto } from '../sequence';
+import { mulberry32 } from '../sequence';
+import type { Timeline } from '../types';
 import {
   baseTimeline,
   buildOverlays,
-  cutsToWindows,
-  photoCountFor,
-  planCuts,
-  sequenceFor,
-  TARGET_ASPECT,
+  editorialSlots,
   type TemplateContext,
 } from './shared';
+import { realizeSlots } from './realize';
+
+const TRAITS: StyleTraits = {
+  minSlideMs: 1400,
+  idealPerSecond: 0.45,
+  selectivity: 0.9, // the most curated style — capacity is not a target
+  allowStacks: false,
+  allowBursts: false,
+  heroHoldBoost: 1.6, // an exceptional photograph is allowed to just sit there
+  maxBurstFrames: 2,
+};
 
 export function buildEditorialMinimal(
   photos: SequencePhoto[],
   ctx: TemplateContext,
 ): Timeline {
   const rand = mulberry32(ctx.seed);
-  const count = photoCountFor(ctx.durationMs, 2.2, photos.length, 3);
-  const sequence = sequenceFor(photos, count, ctx, () => arrangePhotos(photos, count, ctx.seed), 1400);
+  const capacity = Math.max(3, Math.floor(ctx.durationMs / TRAITS.minSlideMs));
+  const slots = editorialSlots(photos, ctx, TRAITS, capacity);
 
-  // Perfectly even pacing — the discipline is the style.
-  const cuts = planCuts(ctx.durationMs, sequence.length, ctx.beats, {
+  let sinceMatte = 0;
+  const clips = realizeSlots(slots, ctx, {
+    minClipMs: 1200,
     snapToleranceMs: 120, // only snap when a beat is essentially already there
-    minClipMs: 1400,
-  });
-  const windows = cutsToWindows(ctx.durationMs, cuts);
+    easing: 'linear',
+    treatmentFor: (slot, i, isLast, r) => {
+      // Full-bleed heroes; alternate matted gallery frames for support.
+      if (slot.hero || isLast || i === 0) {
+        sinceMatte++;
+        return r() < 0.5 ? 'static' : 'cover-push';
+      }
+      if (sinceMatte >= 1 && r() < 0.8) {
+        sinceMatte = 0;
+        return 'matte';
+      }
+      sinceMatte++;
+      return 'static';
+    },
+    transitionFor: () => ({ kind: 'fade', durationMs: 350 }),
+  }, rand);
 
-  const clips: Clip[] = sequence.map((photo, i) => {
-    // Alternate full-bleed stills with matted "gallery" frames on brand color.
-    const matted = i % 2 === 1 && rand() < 0.85;
-    if (matted) {
-      const inset = 0.1;
-      const destW = 1 - inset * 2;
-      const dest = { x: inset, y: 0, w: destW, h: 1 };
-      // Show the photo contained inside the matte area over brand color.
-      return {
-        id: uid(),
-        startMs: windows[i].startMs,
-        endMs: windows[i].endMs,
-        layers: [
-          {
-            photoId: photo.id,
-            dest,
-            crop: { x: 0, y: 0, w: 1, h: 1 },
-            cropEnd: { x: 0, y: 0, w: 1, h: 1 },
-            easing: 'linear' as const,
-            fill: 'contain-brand' as const,
-          },
-        ],
-        transitionIn: { kind: 'fade' as const, durationMs: 350 },
-      };
-    }
-    // Full-bleed: static or near-static crop. No gimmicks. A user-set crop
-    // always wins over automatic framing.
-    const focus = subjectRect(photo.faces, photo.aiSubject);
-    const crop =
-      photo.customCrop ??
-      avoidFaceSlice(
-        coverCrop(photo.width, photo.height, TARGET_ASPECT, focus),
-        photo.faces,
-      );
-    const still = planTreatment(photo, TARGET_ASPECT, 'static');
-    const useStill = photo.customCrop ? true : rand() < 0.5;
-    return {
-      id: uid(),
-      startMs: windows[i].startMs,
-      endMs: windows[i].endMs,
-      layers: [
-        {
-          photoId: photo.id,
-          dest: { x: 0, y: 0, w: 1, h: 1 },
-          crop: useStill ? still.crop : crop,
-          cropEnd: useStill
-            ? still.cropEnd
-            : coverCrop(photo.width, photo.height, TARGET_ASPECT, focus, 1.025),
-          easing: 'linear' as const,
-          fill: 'cover' as const,
-        },
-      ],
-      transitionIn:
-        i === 0
-          ? { kind: 'cut' as const, durationMs: 0 }
-          : { kind: 'fade' as const, durationMs: 350 },
-    };
-  });
-
-  const photosById = new Map(sequence.map((p) => [p.id, p]));
+  const photosById = new Map(slots.flatMap((s) => s.photos).map((p) => [p.id, p]));
   const overlays = buildOverlays(ctx, clips, photosById, {
     titleSize: 50,
     captionSize: 34,
@@ -101,7 +64,6 @@ export function buildEditorialMinimal(
   });
 
   const timeline = baseTimeline(ctx, 'editorial-minimal', clips, overlays);
-  // Editorial background uses the brand's light color rather than black.
   timeline.background = ctx.brand.secondaryColor || '#faf8f5';
   return timeline;
 }

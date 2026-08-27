@@ -1,78 +1,57 @@
-// Template 5 — Photo Story. Builds a micro-narrative: establishing shot →
-// people interacting → closeups and details → emotional close.
+// Template 5 — Photo Story. Feels like experiencing the session or event:
+// the arc (establishing scene → people interacting → closeups → emotional
+// close) drives both the order and how each image is treated.
 
-import { uid } from '../../ids';
-import { planTreatment } from '../layout';
-import { arrangeStory, inferStoryRole, type SequencePhoto } from '../sequence';
+import type { StyleTraits } from '../../editorial/plan';
+import { inferStoryRole, mulberry32, type SequencePhoto } from '../sequence';
 import type { Timeline } from '../types';
 import {
   baseTimeline,
   buildOverlays,
-  cutsToWindows,
-  photoCountFor,
-  planCuts,
-  sequenceFor,
-  TARGET_ASPECT,
+  editorialSlots,
   type TemplateContext,
 } from './shared';
+import { realizeSlots } from './realize';
+
+const TRAITS: StyleTraits = {
+  minSlideMs: 900,
+  idealPerSecond: 0.53,
+  selectivity: 0.5,
+  allowStacks: false,
+  allowBursts: true, // moments unfolding are the heart of a story
+  heroHoldBoost: 1.3,
+  maxBurstFrames: 3,
+};
 
 export function buildPhotoStory(photos: SequencePhoto[], ctx: TemplateContext): Timeline {
-  const count = photoCountFor(ctx.durationMs, 1.9, photos.length, 4);
-  const sequence = sequenceFor(photos, count, ctx, () => arrangeStory(photos, count, ctx.seed), 900);
+  const rand = mulberry32(ctx.seed);
+  const capacity = Math.max(3, Math.floor(ctx.durationMs / TRAITS.minSlideMs));
+  const slots = editorialSlots(photos, ctx, TRAITS, capacity);
 
-  // Establishing and closing images breathe; details move quicker.
-  const weights = sequence.map((p, i) => {
-    if (i === 0 || i === sequence.length - 1) return 1.3;
-    const role = inferStoryRole(p);
-    return role === 'detail' || role === 'closeup' ? 0.85 : 1;
-  });
-  const cuts = planCuts(ctx.durationMs, sequence.length, ctx.beats, {
+  const clips = realizeSlots(slots, ctx, {
+    minClipMs: 800,
     snapToleranceMs: 200,
-    minClipMs: 900,
-    weights,
-  });
-  const windows = cutsToWindows(ctx.durationMs, cuts);
+    easing: 'ease-in-out',
+    treatmentFor: (slot, _i, isLast) => {
+      if (isLast) return 'cover-pull';
+      const photo = slot.photos[0];
+      const role = inferStoryRole(photo);
+      if (role === 'establishing') return photo.width > photo.height ? 'pan' : 'auto';
+      if (role === 'closeup' || role === 'portrait') return 'cover-push';
+      if (role === 'detail') return 'static';
+      return 'auto';
+    },
+    transitionFor: (_i, slot) => {
+      const emotional = slot.photos.some(
+        (p) => inferStoryRole(p) === 'emotional' || inferStoryRole(p) === 'closing',
+      );
+      return emotional || slot.role === 'close'
+        ? { kind: 'fade', durationMs: 450 }
+        : { kind: 'cut', durationMs: 0 };
+    },
+  }, rand);
 
-  const clips = sequence.map((photo, i) => {
-    const role = inferStoryRole(photo);
-    const isLast = i === sequence.length - 1;
-    // Treatment follows the narrative role.
-    const prefer = isLast
-      ? ('cover-pull' as const)
-      : role === 'establishing'
-        ? photo.width > photo.height
-          ? ('pan' as const)
-          : ('auto' as const)
-        : role === 'closeup' || role === 'portrait'
-          ? ('cover-push' as const)
-          : role === 'detail'
-            ? ('static' as const)
-            : ('auto' as const);
-    const plan = planTreatment(photo, TARGET_ASPECT, prefer);
-    return {
-      id: uid(),
-      startMs: windows[i].startMs,
-      endMs: windows[i].endMs,
-      layers: [
-        {
-          photoId: photo.id,
-          dest: { x: 0, y: 0, w: 1, h: 1 },
-          crop: plan.crop,
-          cropEnd: plan.cropEnd,
-          easing: 'ease-in-out' as const,
-          fill: plan.fill,
-        },
-      ],
-      transitionIn:
-        i === 0
-          ? { kind: 'cut' as const, durationMs: 0 }
-          : role === 'emotional' || isLast
-            ? { kind: 'fade' as const, durationMs: 450 }
-            : { kind: 'cut' as const, durationMs: 0 },
-    };
-  });
-
-  const photosById = new Map(sequence.map((p) => [p.id, p]));
+  const photosById = new Map(slots.flatMap((s) => s.photos).map((p) => [p.id, p]));
   const overlays = buildOverlays(ctx, clips, photosById, {
     titleSize: 58,
     captionSize: 38,

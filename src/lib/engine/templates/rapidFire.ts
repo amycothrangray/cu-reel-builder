@@ -1,18 +1,19 @@
 // Template — Rapid Fire. Blink-and-you-miss-it: every included photo in very
 // quick succession (~0.15–0.5s per slide), built for big sets of 50–100
-// images. Static subject-centered crops (motion would blur at this pace),
-// hard cuts, a held opener to hook and a held closer to land.
+// images. The editorial planner still orders for variety and people-spread
+// (the parent test matters most here), but nothing is dropped.
 
-import { uid } from '../../ids';
+import type { StyleTraits } from '../../editorial/plan';
+import type { SequencePhoto } from '../sequence';
 import { planTreatment } from '../layout';
-import { arrangePhotos, type SequencePhoto } from '../sequence';
+import { uid } from '../../ids';
 import type { Timeline } from '../types';
 import {
   baseTimeline,
   buildOverlays,
   cutsToWindows,
+  editorialSlots,
   planCuts,
-  sequenceFor,
   TARGET_ASPECT,
   type TemplateContext,
 } from './shared';
@@ -26,16 +27,20 @@ export function rapidFireCapacity(durationMs: number): number {
   return Math.floor((durationMs - 1300) / RAPID_MIN_SLIDE_MS) + 2;
 }
 
+const TRAITS: StyleTraits = {
+  minSlideMs: RAPID_MIN_SLIDE_MS,
+  idealPerSecond: 5,
+  selectivity: 0, // the whole set — that's the point
+  allowStacks: false,
+  allowBursts: false, // every slide already flashes
+  heroHoldBoost: 1,
+  maxBurstFrames: 2,
+};
+
 export function buildRapidFire(photos: SequencePhoto[], ctx: TemplateContext): Timeline {
   const capacity = rapidFireCapacity(ctx.durationMs);
-  const count = Math.max(3, Math.min(photos.length, capacity));
-  const sequence = sequenceFor(
-    photos,
-    count,
-    ctx,
-    () => arrangePhotos(photos, count, ctx.seed),
-    RAPID_MIN_SLIDE_MS,
-  );
+  const slots = editorialSlots(photos, ctx, TRAITS, capacity);
+  const sequence = slots.map((s) => s.photos[0]);
 
   // Opener and closer hold long enough to read; everything else is a flash.
   const weights = sequence.map((_, i) =>
@@ -54,7 +59,6 @@ export function buildRapidFire(photos: SequencePhoto[], ctx: TemplateContext): T
 
   const clips = sequence.map((photo, i) => {
     const isEdge = i === 0 || i === sequence.length - 1;
-    // Edges get a hint of motion; the flashes stay static.
     const plan = planTreatment(photo, TARGET_ASPECT, isEdge ? 'cover-push' : 'static');
     return {
       id: uid(),

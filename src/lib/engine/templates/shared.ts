@@ -1,6 +1,8 @@
 // Shared template machinery: timing, beat alignment, overlay construction.
 
 import { uid } from '../../ids';
+import { planSequence } from '../../editorial/plan';
+import { refinePlan } from '../../editorial/critic';
 import type { BrandConfig, ReelTextConfig } from '../../types';
 import type {
   Clip,
@@ -18,10 +20,35 @@ export interface TemplateContext {
   brand: BrandConfig;
   /** Beat timestamps in ms from audio analysis; empty when no music. */
   beats: number[];
+  /** Music energy curve (0..1 per 500ms window); empty without music. */
+  intensity?: number[];
+  /** Editorial priorities: photography = selective showcase; school = breadth. */
+  purpose?: 'photography' | 'school';
   audio: TimelineAudio | null;
   seed: number;
   /** True when the user dragged photos into a manual order — respect it. */
   fixedOrder?: boolean;
+}
+
+/** Run the shared editorial pipeline (plan → critic → revised plan). */
+export function editorialSlots(
+  photos: SequencePhoto[],
+  ctx: TemplateContext,
+  traits: import('../../editorial/plan').StyleTraits,
+  capacity: number,
+): import('../../editorial/plan').PlanSlot[] {
+  const purpose = ctx.purpose ?? 'photography';
+  const plan = planSequence(photos, traits, {
+    purpose,
+    durationMs: ctx.durationMs,
+    seed: ctx.seed,
+    fixedOrder: ctx.fixedOrder ?? false,
+    intensity: ctx.intensity ?? [],
+    capacity,
+  });
+  // Second-pass Reel Critic: don't present the first construction —
+  // evaluate it and revise before it becomes a version.
+  return refinePlan(plan, { purpose, fixedOrder: ctx.fixedOrder ?? false }).plan.slots;
 }
 
 /**

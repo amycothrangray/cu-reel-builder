@@ -15,6 +15,14 @@ export interface SequencePhoto {
   ai?: AiInsight;
   aiSubject?: NRect;
   customCrop?: NRect;
+  /** Parallel to faces; local recurrence clustering only. */
+  descriptors?: number[][];
+  /** EXIF capture time (epoch ms) when known — enables burst detection. */
+  takenAt?: number;
+  /** Upload order — burst fallback and stable tie-breaks. */
+  uploadOrder?: number;
+  /** Content lock: the user explicitly added this photo. */
+  required?: boolean;
 }
 
 /** Deterministic PRNG so a given seed reproduces the same arrangement. */

@@ -124,7 +124,9 @@ describe('reel template timing', () => {
     const t2 = TEMPLATES[0].build(many, ctx({ fixedOrder: true, durationMs: 9000 }));
     const used2 = new Set(t2.clips.flatMap((c) => c.layers.map((l) => l.photoId)));
     expect(used2.size).toBe(10);
-    for (const clip of t2.clips) expect(clip.endMs - clip.startMs).toBeGreaterThanOrEqual(899);
+    // Timing varies editorially (hero holds, hooks), but never below the
+    // style's readable floor.
+    for (const clip of t2.clips) expect(clip.endMs - clip.startMs).toBeGreaterThanOrEqual(699);
   });
 
   it('respects a manual fixed order', () => {

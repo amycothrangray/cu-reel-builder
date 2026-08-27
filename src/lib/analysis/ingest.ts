@@ -18,13 +18,15 @@ import { computePhash } from '../imaging/similarity';
 import { classifyPhoto, correctionDefault } from '../classify/classify';
 import { renderCorrected } from '../imaging/correction';
 import { canvasToBlob, scaleToCanvas } from '../imaging/decode';
-import { detectFaces, detectFacesWithDescriptors } from './faces';
+import { detectFaces, detectFacesWithDescriptors, type FaceWithDescriptor } from './faces';
 import { scorePhoto } from './score';
 import { bestDistance, isPossibleMatch } from '../restricted/matching';
 import { loadActiveReferenceSets } from '../restricted/store';
 import type { PhotoAnalysis, PhotoRecord, RestrictedFlag } from '../types';
 
-export const ANALYSIS_VERSION = 1;
+// v2: face descriptors stored with analysis (identity spread + restricted
+// matching share one detection pass).
+export const ANALYSIS_VERSION = 2;
 
 /** Mobile Safari struggles beyond a couple of simultaneous full-res decodes. */
 const CONCURRENCY = 2;
@@ -160,11 +162,15 @@ async function ingestOne(
         height: record.height,
         mimeType: record.mimeType,
       });
-      const faces = await detectFaces(previewCanvas);
+      // One detection pass serves crop planning, within-set identity
+      // recognition AND restricted-child matching.
+      const detected = await detectWithDescriptorsSafe(previewCanvas);
+      const faces = detected.map((d) => d.box);
       const score = scorePhoto({ stats, faces, width: record.width, height: record.height });
       analysis = {
         stats,
         faces,
+        descriptors: detected.map((d) => Array.from(d.descriptor)),
         phash,
         classification,
         score,
@@ -177,7 +183,11 @@ async function ingestOne(
 
     // 4. Restricted-child matching — always fresh, never cached.
     if (referenceSets.length > 0) {
-      record.restrictedFlags = await matchRestricted(previewCanvas, referenceSets);
+      record.restrictedFlags = matchRestrictedFromAnalysis(
+        analysis.faces,
+        analysis.descriptors ?? [],
+        referenceSets,
+      );
     }
 
     // 5. Restrained correction for mobile photos that need it.
@@ -202,32 +212,46 @@ async function ingestOne(
   }
 }
 
-async function matchRestricted(
-  previewCanvas: HTMLCanvasElement,
-  referenceSets: Awaited<ReturnType<typeof loadActiveReferenceSets>>,
-): Promise<RestrictedFlag[]> {
+/** Faces + descriptors, degrading gracefully to detection-only. */
+async function detectWithDescriptorsSafe(
+  canvas: HTMLCanvasElement,
+): Promise<FaceWithDescriptor[]> {
   try {
-    const faces = await detectFacesWithDescriptors(previewCanvas);
-    const flags: RestrictedFlag[] = [];
-    for (const face of faces) {
-      for (const { profile, embeddings } of referenceSets) {
-        const distance = bestDistance(face.descriptor, embeddings);
-        if (isPossibleMatch(distance)) {
-          flags.push({
-            profileId: profile.id,
-            profileLabel: profile.label,
-            face: face.box,
-            distance,
-            status: 'pending',
-          });
-        }
+    return await detectFacesWithDescriptors(canvas);
+  } catch (err) {
+    console.warn('Descriptor computation unavailable, using detection only:', err);
+    try {
+      const boxes = await detectFaces(canvas);
+      return boxes.map((box) => ({ box, descriptor: new Float32Array(0) }));
+    } catch {
+      return [];
+    }
+  }
+}
+
+function matchRestrictedFromAnalysis(
+  faces: RestrictedFlag['face'][],
+  descriptors: number[][],
+  referenceSets: Awaited<ReturnType<typeof loadActiveReferenceSets>>,
+): RestrictedFlag[] {
+  const flags: RestrictedFlag[] = [];
+  for (let i = 0; i < faces.length; i++) {
+    const descriptor = descriptors[i];
+    if (!descriptor || descriptor.length === 0) continue;
+    for (const { profile, embeddings } of referenceSets) {
+      const distance = bestDistance(descriptor, embeddings);
+      if (isPossibleMatch(distance)) {
+        flags.push({
+          profileId: profile.id,
+          profileLabel: profile.label,
+          face: faces[i],
+          distance,
+          status: 'pending',
+        });
       }
     }
-    return flags;
-  } catch (err) {
-    console.warn('Restricted matching failed for one photo:', err);
-    return [];
   }
+  return flags;
 }
 
 /**
@@ -240,13 +264,25 @@ export async function rescanReelForRestricted(reelId: string): Promise<number> {
   let flagged = 0;
   for (const photo of photos) {
     if (photo.status !== 'ready') continue;
-    const previewBlob = await db.blobs.get(blobKey.preview(photo.id));
-    if (!previewBlob) continue;
-    const bitmap = await createImageBitmap(previewBlob.blob);
-    const canvas = scaleToCanvas(bitmap, 1600);
-    bitmap.close();
+    // Prefer descriptors stored with the analysis; older records without
+    // them get one fresh detection pass.
+    let faces = photo.analysis?.faces ?? [];
+    let descriptors = photo.analysis?.descriptors ?? [];
+    if (descriptors.length === 0 && faces.length > 0) {
+      const previewBlob = await db.blobs.get(blobKey.preview(photo.id));
+      if (previewBlob) {
+        const bitmap = await createImageBitmap(previewBlob.blob);
+        const canvas = scaleToCanvas(bitmap, 1600);
+        bitmap.close();
+        const detected = await detectWithDescriptorsSafe(canvas);
+        faces = detected.map((d) => d.box);
+        descriptors = detected.map((d) => Array.from(d.descriptor));
+      }
+    }
     const fresh =
-      referenceSets.length > 0 ? await matchRestricted(canvas, referenceSets) : [];
+      referenceSets.length > 0
+        ? matchRestrictedFromAnalysis(faces, descriptors, referenceSets)
+        : [];
     // Preserve prior review decisions for the same profile.
     const merged = fresh.map((f) => {
       const prior = photo.restrictedFlags.find((p) => p.profileId === f.profileId);

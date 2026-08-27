@@ -1,12 +1,14 @@
 // Bridges stored records to the template engine: converts PhotoRecords to
-// SequencePhotos, applies inclusion/blocking rules, resolves the template,
-// and produces a Timeline.
+// SequencePhotos, applies the three-state photo model (required / eligible /
+// excluded), resolves the reel's purpose, and produces a Timeline.
 
-import type { BrandConfig, PhotoRecord, ReelRecord, TemplateId } from '../types';
+import { effectiveClassification, type BrandConfig, type PhotoRecord, type ReelRecord, type TemplateId } from '../types';
 import type { Timeline, TimelineAudio } from './types';
 import type { SequencePhoto } from './sequence';
 import { getTemplate } from './templates';
 import type { TemplateContext } from './templates/shared';
+import { clusterIdentities } from '../editorial/identity';
+import { inferPurpose } from '../editorial/profile';
 
 /** Photos eligible to appear in the rendered reel. */
 export function eligiblePhotos(photos: PhotoRecord[]): PhotoRecord[] {
@@ -19,7 +21,15 @@ export function eligiblePhotos(photos: PhotoRecord[]): PhotoRecord[] {
   );
 }
 
-export function toSequencePhoto(p: PhotoRecord): SequencePhoto {
+/** Parse EXIF "YYYY:MM:DD HH:MM:SS" (or anything Date can read) to epoch ms. */
+export function parseExifDate(value: string | undefined): number | undefined {
+  if (!value) return undefined;
+  const normalized = value.replace(/^(\d{4}):(\d{2}):(\d{2})/, '$1-$2-$3');
+  const t = Date.parse(normalized);
+  return Number.isNaN(t) ? undefined : t;
+}
+
+export function toSequencePhoto(p: PhotoRecord, required = false): SequencePhoto {
   return {
     id: p.id,
     width: p.width,
@@ -27,6 +37,7 @@ export function toSequencePhoto(p: PhotoRecord): SequencePhoto {
     score: p.analysis?.score ?? 0.5,
     phash: p.analysis?.phash ?? '0000000000000000',
     faces: p.analysis?.faces ?? [],
+    descriptors: p.analysis?.descriptors,
     stats: p.analysis?.stats ?? {
       sharpness: 0.5,
       contrast: 0.2,
@@ -41,7 +52,26 @@ export function toSequencePhoto(p: PhotoRecord): SequencePhoto {
     ai: p.analysis?.ai,
     aiSubject: p.analysis?.ai?.subjectRect,
     customCrop: p.customCrop,
+    takenAt: parseExifDate(p.exif.dateTaken),
+    uploadOrder: p.order,
+    required,
   };
+}
+
+/** Resolve 'auto' purpose from the character of the set. */
+export function resolvePurpose(
+  reel: ReelRecord,
+  photoRecords: PhotoRecord[],
+  sequencePhotos: SequencePhoto[],
+): 'photography' | 'school' {
+  const purpose = reel.purpose ?? 'auto';
+  if (purpose !== 'auto') return purpose;
+  const ready = photoRecords.filter((p) => p.status === 'ready');
+  const proFraction =
+    ready.length > 0
+      ? ready.filter((p) => effectiveClassification(p) === 'pro').length / ready.length
+      : 1;
+  return inferPurpose(sequencePhotos, clusterIdentities(sequencePhotos), proFraction);
 }
 
 export interface BuildOptions {
@@ -50,18 +80,21 @@ export interface BuildOptions {
   brand: BrandConfig;
   templateId: TemplateId;
   beats: number[];
+  intensity?: number[];
   seed: number;
 }
 
 export function buildTimeline(opts: BuildOptions): Timeline {
   const { reel, brand, templateId, beats, seed } = opts;
   const eligible = eligiblePhotos(opts.photos);
+  const requiredIds = new Set(reel.requiredIds ?? []);
 
-  let sequencePhotos = eligible.map(toSequencePhoto);
+  let sequencePhotos = eligible.map((p) => toSequencePhoto(p, requiredIds.has(p.id)));
   let fixedOrder = false;
   if (reel.manualOrder && reel.manualOrder.length > 0) {
+    // ORDER lock: the user's explicit sequence. Photos not yet in the manual
+    // list (e.g. just uploaded) go to the end.
     const orderIndex = new Map(reel.manualOrder.map((id, i) => [id, i]));
-    // Photos not yet in the manual list (e.g. just uploaded) go to the end.
     const fallback = orderIndex.size;
     sequencePhotos = [...sequencePhotos].sort(
       (a, b) => (orderIndex.get(a.id) ?? fallback) - (orderIndex.get(b.id) ?? fallback),
@@ -83,6 +116,8 @@ export function buildTimeline(opts: BuildOptions): Timeline {
     text: reel.text,
     brand,
     beats,
+    intensity: opts.intensity ?? [],
+    purpose: resolvePurpose(reel, opts.photos, sequencePhotos),
     audio,
     seed,
     fixedOrder,

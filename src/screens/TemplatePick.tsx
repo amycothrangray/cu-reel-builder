@@ -4,9 +4,9 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { db } from '../lib/db';
 import { TEMPLATES, surpriseMe, templateCapacity } from '../lib/engine/templates';
 import { toSequencePhoto, eligiblePhotos } from '../lib/engine/buildReel';
-import { generateVersion } from '../lib/reels';
+import { generateVersion, touchReel } from '../lib/reels';
 import { useToasts } from '../components/toast';
-import type { TemplateId } from '../lib/types';
+import type { ReelPurpose, TemplateId } from '../lib/types';
 
 /** Tiny pure-CSS motion sketch that hints at each template's feel. */
 function TemplateSketch({ id }: { id: TemplateId }) {
@@ -75,6 +75,12 @@ export function TemplatePickScreen() {
     () => (reelId ? db.photos.where('reelId').equals(reelId).toArray() : []),
     [reelId],
   );
+  const reel = useLiveQuery(() => (reelId ? db.reels.get(reelId) : undefined), [reelId]);
+  const purpose: ReelPurpose = reel?.purpose ?? 'auto';
+
+  const setPurpose = (p: ReelPurpose) => {
+    if (reelId) void touchReel(reelId, { purpose: p });
+  };
 
   const choose = async (templateId: TemplateId, viaSurprise = false) => {
     if (!reelId) return;
@@ -94,7 +100,7 @@ export function TemplatePickScreen() {
 
   const surprise = () => {
     if (!photos) return;
-    const seq = eligiblePhotos(photos).map(toSequencePhoto);
+    const seq = eligiblePhotos(photos).map((p) => toSequencePhoto(p));
     const picked = surpriseMe(seq, Date.now() % 97);
     void choose(picked, true);
   };
@@ -112,6 +118,37 @@ export function TemplatePickScreen() {
         <button className="btn btn-secondary" onClick={surprise} disabled={building !== null}>
           {building === 'surprise' ? <span className="spinner" /> : '✨'} Surprise Me
         </button>
+      </div>
+
+      <div className="panel" style={{ marginBottom: 20, padding: 16 }}>
+        <div className="row wrap" style={{ gap: 8 }}>
+          <span style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--ink-soft)' }}>
+            What's this reel for?
+          </span>
+          <div className="spacer" />
+          {(
+            [
+              ['photography', 'Photography'],
+              ['school', 'School / Community'],
+              ['auto', 'Surprise me'],
+            ] as [ReelPurpose, string][]
+          ).map(([value, label]) => (
+            <button
+              key={value}
+              className={`btn btn-sm ${purpose === value ? 'btn-primary' : 'btn-secondary'}`}
+              onClick={() => setPurpose(value)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <p className="faint" style={{ marginTop: 8 }}>
+          {purpose === 'school'
+            ? 'Energetic, inclusive coverage — many faces, real moments, community life.'
+            : purpose === 'photography'
+              ? 'A selective, emotional showcase — the strongest photographs, given room.'
+              : 'We’ll read the set and pick the right editorial approach for it.'}
+        </p>
       </div>
 
       <div className="stack-v">

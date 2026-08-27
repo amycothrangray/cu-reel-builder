@@ -52,6 +52,34 @@ session, choose the vibe, get a polished 9:16 MP4 — no video editing required.
 | **Browser** | Everything by default: ingestion, HEIC conversion, analysis, classification, correction, face detection & embeddings, template algorithms, beat detection, preview, MP4 encoding, storage (IndexedDB). |
 | **Netlify Functions** | One optional route, `/api/analyze-photos`, which proxies small downscaled previews to the Claude vision API for smarter triage/crop planning. The API key lives server-side only. The app is fully functional without it. |
 
+### Editorial intelligence
+
+Reels are *edited*, not templated. `src/lib/editorial/` holds the engine:
+
+- **Reel Purpose** (Photography / School / Surprise me) is separate from
+  Style: purpose sets editorial priorities (selection, breadth, emphasis);
+  style sets presentation character. Photography mode is selective — a tight
+  22-photo reel beats a padded 35 — while School/Community mode optimizes
+  the "parent test": many recognizable faces, real moments, breadth across
+  the set, technical quality deliberately not dominant.
+- **Editorial profiles** per photo: shot scale, people count, grouping,
+  energy, brightness, purpose-weighted hero score.
+- **Recurring-identity clustering** (fully local, recurrence only — no
+  demographic inference) so the same student doesn't accidentally headline
+  the whole reel.
+- **Micro-sequences**: burst frames of one unfolding moment become rapid
+  sequences; redundant alternate takes collapse to the best one.
+- **Arc-based planning**: hook → establish → build → breath → payoff →
+  close, shaped by purpose, style, the photographs and the music's energy
+  curve; heroes hold longer and land on musical moments.
+- **A second-pass Reel Critic** scores every constructed plan (opener,
+  variety, people spread, brightness flow, redundancy, hero emphasis) and
+  revises it before it ever becomes Version 1.
+- **Three-state photo model**: REQUIRED (user-added — never dropped, made
+  to work), ELIGIBLE (used when it improves the edit), EXCLUDED. Choosing
+  photos does not freeze their order; only explicit manual reordering does,
+  and Try Another Edit respects whichever locks exist.
+
 Key modules:
 
 - `src/lib/engine/` — the timeline engine. Templates emit a plain serializable

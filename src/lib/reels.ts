@@ -30,7 +30,9 @@ export async function createReel(name?: string): Promise<ReelRecord> {
     musicName: null,
     versions: [],
     activeVersionId: null,
+    requiredIds: [],
     manualOrder: null,
+    purpose: 'auto',
   };
   await db.reels.add(reel);
   await trackUsage('reel-created');
@@ -41,15 +43,17 @@ export async function touchReel(reelId: string, patch: Partial<ReelRecord> = {})
   await db.reels.update(reelId, { ...patch, updatedAt: Date.now() });
 }
 
-export async function beatsForReel(reel: ReelRecord): Promise<number[]> {
-  if (!reel.musicAssetKey) return [];
+export async function musicAnalysisForReel(
+  reel: ReelRecord,
+): Promise<{ beats: number[]; intensity: number[] }> {
+  if (!reel.musicAssetKey) return { beats: [], intensity: [] };
   try {
     const blob = await getBlob(reel.musicAssetKey);
-    if (!blob) return [];
+    if (!blob) return { beats: [], intensity: [] };
     const analysis = await analyzeBeats(reel.musicAssetKey, blob);
-    return analysis.beats;
+    return { beats: analysis.beats, intensity: analysis.intensity };
   } catch {
-    return [];
+    return { beats: [], intensity: [] };
   }
 }
 
@@ -66,7 +70,7 @@ export async function generateVersion(
   if (!reel) throw new Error('Reel not found');
   const photos = await db.photos.where('reelId').equals(reelId).toArray();
   const brand = await getBrand();
-  const beats = await beatsForReel(reel);
+  const music = await musicAnalysisForReel(reel);
   const usedSeed = seed ?? (reel.versions.length + 1) * 7919 + reelId.length;
 
   const timeline: Timeline = buildTimeline({
@@ -74,7 +78,8 @@ export async function generateVersion(
     photos,
     brand,
     templateId,
-    beats,
+    beats: music.beats,
+    intensity: music.intensity,
     seed: usedSeed,
   });
 
@@ -105,13 +110,14 @@ export async function rebuildActiveVersion(reelId: string): Promise<void> {
   if (!active) return;
   const photos = await db.photos.where('reelId').equals(reelId).toArray();
   const brand = await getBrand();
-  const beats = await beatsForReel(reel);
+  const music = await musicAnalysisForReel(reel);
   const timeline = buildTimeline({
     reel,
     photos,
     brand,
     templateId: reel.templateId,
-    beats,
+    beats: music.beats,
+    intensity: music.intensity,
     seed: active.timeline.seed,
   });
   const versions = reel.versions.map((v) =>
@@ -132,35 +138,44 @@ export function stripOrder(timeline: Timeline): string[] {
 }
 
 /**
- * Guarantee photos a place in the current arrangement. Once a user asks for
- * specific photos, the arrangement becomes a manual list (template still
- * handles crops, motion and timing) with the new photos appended.
+ * CONTENT lock: guarantee photos a place in the reel. Choosing content is
+ * not volunteering to be the video editor — the engine still finds the
+ * strongest sequence unless the user has also manually ordered (in which
+ * case the new photos join the end of their list).
  */
 export async function addPhotosToArrangement(reelId: string, photoIds: string[]): Promise<void> {
   await db.photos.where('id').anyOf(photoIds).modify({ included: true });
   const reel = await db.reels.get(reelId);
-  const active = reel?.versions.find((v) => v.id === reel.activeVersionId);
-  if (!reel || !active) return; // no arrangement yet — templates pick these up
-  const order = reel.manualOrder ?? stripOrder(active.timeline);
+  if (!reel) return;
+  const requiredIds = [...(reel.requiredIds ?? [])];
   for (const id of photoIds) {
-    if (!order.includes(id)) order.push(id);
+    if (!requiredIds.includes(id)) requiredIds.push(id);
   }
-  await db.reels.update(reelId, { manualOrder: order, updatedAt: Date.now() });
+  const patch: Partial<ReelRecord> = { requiredIds, updatedAt: Date.now() };
+  if (reel.manualOrder) {
+    const order = [...reel.manualOrder];
+    for (const id of photoIds) {
+      if (!order.includes(id)) order.push(id);
+    }
+    patch.manualOrder = order;
+  }
+  await db.reels.update(reelId, patch);
   await rebuildActiveVersion(reelId);
 }
 
-/** Take photos out of the arrangement (and out of the reel). */
+/** Take photos out of the reel (clears both locks for them). */
 export async function removePhotosFromArrangement(reelId: string, photoIds: string[]): Promise<void> {
   await db.photos.where('id').anyOf(photoIds).modify({ included: false });
   const reel = await db.reels.get(reelId);
   if (!reel) return;
-  if (reel.manualOrder) {
-    const remove = new Set(photoIds);
-    await db.reels.update(reelId, {
-      manualOrder: reel.manualOrder.filter((id) => !remove.has(id)),
-      updatedAt: Date.now(),
-    });
-  }
+  const remove = new Set(photoIds);
+  await db.reels.update(reelId, {
+    requiredIds: (reel.requiredIds ?? []).filter((id) => !remove.has(id)),
+    manualOrder: reel.manualOrder
+      ? reel.manualOrder.filter((id) => !remove.has(id))
+      : null,
+    updatedAt: Date.now(),
+  });
   await rebuildActiveVersion(reelId);
 }
 
@@ -190,12 +205,12 @@ export async function duplicateReel(reelId: string): Promise<ReelRecord | null> 
       if (blob) await putBlob(blobKey[variant](newId), blob);
     }
   }
-  if (copy.manualOrder) {
-    copy.manualOrder = copy.manualOrder
-      .map((id) => idMap.get(id))
-      .filter((id): id is string => Boolean(id));
-    await db.reels.update(copy.id, { manualOrder: copy.manualOrder });
-  }
+  const remap = (ids: string[] | null | undefined) =>
+    ids?.map((id) => idMap.get(id)).filter((id): id is string => Boolean(id)) ?? null;
+  await db.reels.update(copy.id, {
+    manualOrder: remap(copy.manualOrder),
+    requiredIds: remap(copy.requiredIds) ?? [],
+  });
   return copy;
 }
 

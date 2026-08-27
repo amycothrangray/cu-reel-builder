@@ -1,72 +1,57 @@
 // Template 1 — Signature Energy. The strong default: fast, upbeat, polished.
-// ~1.5–2s per photo, gentle motion, music-aware cuts, photography as hero.
+// Energetic rhythm, gentle motion, music-aware cuts, occasional burst
+// sequences, hero photos held a beat longer — photography stays the hero.
 
-import { uid } from '../../ids';
-import { planTreatment } from '../layout';
-import { arrangePhotos, mulberry32, type SequencePhoto } from '../sequence';
+import type { StyleTraits } from '../../editorial/plan';
+import type { SequencePhoto } from '../sequence';
+import { mulberry32 } from '../sequence';
 import type { Timeline } from '../types';
 import {
   baseTimeline,
   buildOverlays,
-  cutsToWindows,
-  photoCountFor,
-  planCuts,
-  sequenceFor,
-  TARGET_ASPECT,
+  editorialSlots,
   type TemplateContext,
 } from './shared';
+import { realizeSlots } from './realize';
+
+const TRAITS: StyleTraits = {
+  minSlideMs: 900,
+  idealPerSecond: 0.59,
+  selectivity: 0.5,
+  allowStacks: false,
+  allowBursts: true,
+  heroHoldBoost: 1.35,
+  maxBurstFrames: 3,
+};
 
 export function buildSignatureEnergy(
   photos: SequencePhoto[],
   ctx: TemplateContext,
 ): Timeline {
   const rand = mulberry32(ctx.seed);
-  const count = photoCountFor(ctx.durationMs, 1.7, photos.length);
-  const sequence = sequenceFor(photos, count, ctx, () => arrangePhotos(photos, count, ctx.seed), 900);
+  const capacity = Math.max(3, Math.floor(ctx.durationMs / TRAITS.minSlideMs));
+  const slots = editorialSlots(photos, ctx, TRAITS, capacity);
 
-  // The opener holds a touch longer to land the hook; the closer breathes.
-  const weights = sequence.map((_, i) =>
-    i === 0 ? 1.25 : i === sequence.length - 1 ? 1.2 : 1,
-  );
-  const cuts = planCuts(ctx.durationMs, sequence.length, ctx.beats, {
+  const clips = realizeSlots(slots, ctx, {
+    minClipMs: 700,
     snapToleranceMs: 180,
-    minClipMs: 900,
-    weights,
-  });
-  const windows = cutsToWindows(ctx.durationMs, cuts);
+    easing: 'ease-in-out',
+    treatmentFor: (slot, _i, isLast) => {
+      if (isLast) return 'cover-pull'; // the closer settles outward
+      if (slot.role === 'breath') return 'static';
+      return 'auto';
+    },
+    // Mostly clean cuts with the occasional short fade for texture; breaths
+    // and the closer arrive softly.
+    transitionFor: (_i, slot, r) =>
+      slot.role === 'close' || slot.role === 'breath'
+        ? { kind: 'fade', durationMs: 300 }
+        : r() < 0.2
+          ? { kind: 'fade', durationMs: 240 }
+          : { kind: 'cut', durationMs: 0 },
+  }, rand);
 
-  const clips = sequence.map((photo, i) => {
-    const isLast = i === sequence.length - 1;
-    const plan = planTreatment(
-      { ...photo, aiSubject: photo.aiSubject },
-      TARGET_ASPECT,
-      isLast ? 'cover-pull' : 'auto',
-    );
-    return {
-      id: uid(),
-      startMs: windows[i].startMs,
-      endMs: windows[i].endMs,
-      layers: [
-        {
-          photoId: photo.id,
-          dest: { x: 0, y: 0, w: 1, h: 1 },
-          crop: plan.crop,
-          cropEnd: plan.cropEnd,
-          easing: 'ease-in-out' as const,
-          fill: plan.fill,
-        },
-      ],
-      // Mostly clean cuts with the occasional short fade for texture.
-      transitionIn:
-        i === 0
-          ? { kind: 'cut' as const, durationMs: 0 }
-          : rand() < 0.25
-            ? { kind: 'fade' as const, durationMs: 240 }
-            : { kind: 'cut' as const, durationMs: 0 },
-    };
-  });
-
-  const photosById = new Map(sequence.map((p) => [p.id, p]));
+  const photosById = new Map(slots.flatMap((s) => s.photos).map((p) => [p.id, p]));
   const overlays = buildOverlays(ctx, clips, photosById, {
     titleSize: 64,
     captionSize: 40,

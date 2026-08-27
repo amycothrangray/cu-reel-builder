@@ -15,7 +15,7 @@ import { ReelPlayer } from '../lib/engine/preview';
 import { TEMPLATES, getTemplate, templateCapacity } from '../lib/engine/templates';
 import { useBlobUrl } from '../components/hooks';
 import { useToasts } from '../components/toast';
-import type { ReelDuration, ReelRecord, TemplateId } from '../lib/types';
+import type { ReelDuration, ReelPurpose, ReelRecord, TemplateId } from '../lib/types';
 import type { Timeline } from '../lib/engine/types';
 
 function StripThumb({
@@ -187,10 +187,17 @@ export function EditorScreen() {
     if (!reel.templateId) return;
     setBusy(true);
     try {
-      // A fresh arrangement drops any manual order and rolls a new seed.
-      await touchReel(reel.id, { manualOrder: null });
+      // Lock-aware: photos the user added stay in; a manual order stays in
+      // order (only pacing/treatment vary); otherwise the engine rethinks
+      // the sequence with a fresh seed. Earlier versions are never lost.
       await generateVersion(reel.id, reel.templateId, Date.now() % 100_000);
-      show('New arrangement created — your earlier versions are saved.');
+      show(
+        reel.manualOrder
+          ? 'New take created — your photo order is kept; pacing and motion vary.'
+          : (reel.requiredIds?.length ?? 0) > 0
+            ? 'New arrangement created — your added photos are all still in.'
+            : 'New arrangement created — your earlier versions are saved.',
+      );
     } finally {
       setBusy(false);
     }
@@ -385,6 +392,20 @@ export function EditorScreen() {
               </select>
             </div>
             <div className="field">
+              <label>Purpose</label>
+              <select
+                value={reel.purpose ?? 'auto'}
+                onChange={(e) => void patchAndRebuild({ purpose: e.target.value as ReelPurpose })}
+              >
+                <option value="auto">Surprise me — read the set</option>
+                <option value="photography">Photography — selective showcase</option>
+                <option value="school">School / Community — many faces, real moments</option>
+              </select>
+              <span className="hint">
+                Purpose sets what matters (selection & breadth); style sets how it feels.
+              </span>
+            </div>
+            <div className="field">
               <label>Length</label>
               <div className="row">
                 {([9, 12, 15] as ReelDuration[]).map((d) => (
@@ -401,15 +422,22 @@ export function EditorScreen() {
                 <span className="hint">
                   {(() => {
                     const cap = templateCapacity(getTemplate(reel.templateId), reel.durationSec * 1000);
-                    const wanted = reel.manualOrder
-                      ? reel.manualOrder.length
-                      : stripPhotoIds.length;
-                    const cut = Math.max(0, Math.min(wanted, photos.filter((p) => p.included).length) - stripPhotoIds.length);
+                    const included = photos.filter((p) => p.included).length;
+                    const showing = stripPhotoIds.length;
+                    // With a manual order, anything cut is a physical limit;
+                    // otherwise the edit is selective by design.
+                    if (reel.manualOrder) {
+                      const cut = Math.max(0, Math.min(reel.manualOrder.length, included) - showing);
+                      return (
+                        `Showing ${showing} photos in your order — holds up to ${cap} at ${reel.durationSec}s.` +
+                        (cut > 0
+                          ? ` ${cut} more don’t fit; pick a longer length or a faster style like Rapid Fire.`
+                          : '')
+                      );
+                    }
                     return (
-                      `Showing ${stripPhotoIds.length} photos — this style fits up to ${cap} at ${reel.durationSec}s.` +
-                      (cut > 0
-                        ? ` ${cut} more don’t fit; pick a longer length or a faster style like Rapid Fire.`
-                        : '')
+                      `Showing ${showing} of ${included} included photos (holds up to ${cap} at ${reel.durationSec}s). ` +
+                      `A tight edit is deliberate — use “Add to reel” on any photo that must appear.`
                     );
                   })()}
                 </span>
