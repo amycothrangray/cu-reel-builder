@@ -13,6 +13,7 @@ import {
 } from '../lib/reels';
 import { formatTimestamp } from '../lib/audio/segments';
 import { InstagramAudioModal } from '../components/InstagramAudioModal';
+import { CropModal } from '../components/CropModal';
 import { Modal } from '../components/Modal';
 import { loadResources, type LoadedResources } from '../lib/engine/resources';
 import { ReelPlayer } from '../lib/engine/preview';
@@ -20,23 +21,39 @@ import { TEMPLATES, getTemplate, pacingFor } from '../lib/engine/templates';
 import { useRebuildStatus } from '../lib/rebuildStatus';
 import { useBlobUrl } from '../components/hooks';
 import { useToasts } from '../components/toast';
-import type { ReelDuration, ReelPurpose, ReelRecord, TemplateId } from '../lib/types';
+import type { NRect, ReelDuration, ReelPurpose, ReelRecord, TemplateId } from '../lib/types';
 import type { Timeline } from '../lib/engine/types';
 
 function StripThumb({
   photoId,
   index,
   count,
+  crop,
   onMove,
   onRemove,
+  onCrop,
 }: {
   photoId: string;
   index: number;
   count: number;
+  /** User-set framing, shown here so the strip matches the reel. */
+  crop?: NRect;
   onMove: (from: number, to: number) => void;
   onRemove: () => void;
+  onCrop: () => void;
 }) {
   const url = useBlobUrl(blobKey.thumb(photoId));
+  // With a custom crop, scale the thumbnail so the chosen region fills it.
+  const cropStyle: React.CSSProperties = crop
+    ? {
+        position: 'absolute',
+        width: `${100 / crop.w}%`,
+        height: `${100 / crop.h}%`,
+        left: `${(-crop.x / crop.w) * 100}%`,
+        top: `${(-crop.y / crop.h) * 100}%`,
+        objectFit: 'cover',
+      }
+    : { width: '100%', height: '100%', objectFit: 'cover' };
   return (
     <div
       draggable
@@ -58,7 +75,31 @@ function StripThumb({
         cursor: 'grab',
       }}
     >
-      {url && <img src={url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />}
+      {url && <img src={url} alt="" style={cropStyle} />}
+      <button
+        aria-label="Fix crop"
+        title="Fix crop"
+        onClick={(e) => {
+          e.stopPropagation();
+          onCrop();
+        }}
+        style={{
+          position: 'absolute',
+          top: 4,
+          left: 4,
+          width: 22,
+          height: 22,
+          borderRadius: 6,
+          background: crop ? 'var(--accent)' : 'rgba(13,12,10,0.6)',
+          color: '#fff',
+          fontSize: 12,
+          display: 'grid',
+          placeItems: 'center',
+          lineHeight: 1,
+        }}
+      >
+        ⛶
+      </button>
       <div
         style={{
           position: 'absolute',
@@ -111,6 +152,7 @@ export function EditorScreen() {
   const [busy, setBusy] = useState(false);
   const [igModalOpen, setIgModalOpen] = useState(false);
   const [styleChooserOpen, setStyleChooserOpen] = useState(false);
+  const [cropPhotoId, setCropPhotoId] = useState<string | null>(null);
   const musicInputRef = useRef<HTMLInputElement>(null);
 
   const reel = useLiveQuery(() => (reelId ? db.reels.get(reelId) : undefined), [reelId]);
@@ -439,6 +481,8 @@ export function EditorScreen() {
                   photoId={id}
                   index={i}
                   count={stripPhotoIds.length}
+                  crop={photos.find((p) => p.id === id)?.customCrop}
+                  onCrop={() => setCropPhotoId(id)}
                   onMove={movePhoto}
                   onRemove={() => {
                     void removePhotosFromArrangement(reel.id, [id]);
@@ -463,7 +507,7 @@ export function EditorScreen() {
               </Link>
             </div>
             <p className="faint" style={{ marginTop: 6 }}>
-              Drag (or use ‹ ›) to reorder. The style keeps handling crops and motion.
+              Drag (or use ‹ ›) to reorder. Tap ⛶ on any photo to fix its framing.
             </p>
           </div>
 
@@ -664,6 +708,14 @@ export function EditorScreen() {
           </div>
         </div>
       </div>
+
+      {cropPhotoId && (
+        <CropModal
+          photoId={cropPhotoId}
+          reelId={reel.id}
+          onClose={() => setCropPhotoId(null)}
+        />
+      )}
 
       {igModalOpen && <InstagramAudioModal reel={reel} onClose={() => setIgModalOpen(false)} />}
 

@@ -43,6 +43,10 @@ session, choose the vibe, get a polished 9:16 MP4 — no video editing required.
 - **Versioning** — "Try Another Edit" creates a new arrangement as a new
   version (in the same style or any other); earlier versions are never
   destroyed.
+- **Fix framing anywhere** — tap ⛶ on any photo in the editor's photo strip
+  (or open it from the photos page) to drag and zoom a 9:16 crop. The strip
+  thumbnail then shows that exact framing, and the reel rebuilds around it.
+  Crops are non-destructive and always beat the automatic framing.
 - **An honest preview** — the editor always shows how many photos are in the
   reel, its length, the per-photo pace, a playhead, and whether the preview
   is up to date or still rebuilding. Playback stops at the end with an
