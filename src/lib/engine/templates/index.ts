@@ -53,8 +53,26 @@ export interface PacingReport {
   physicalCapacity: number;
   /** True when the reel is running faster than the style promises. */
   rushed: boolean;
-  /** Shortest reel length (seconds) that would hold this many comfortably. */
+  /** Shortest whole-second reel length that would hold this many comfortably. */
   neededSec: number | null;
+}
+
+/**
+ * The reel length (whole seconds) this many photos would naturally fill at
+ * the style's comfortable pace — the answer to "how long would this be?".
+ * Clamped to the app's allowed duration range; null when even the maximum
+ * can't comfortably hold that many (Rapid Fire aside, which always can).
+ */
+export function estimateDurationSec(
+  template: TemplateDefinition,
+  photoCount: number,
+  maxSec = 60,
+): number | null {
+  const n = Math.max(3, photoCount);
+  for (let sec = 5; sec <= maxSec; sec++) {
+    if (templateComfortableCapacity(template, sec * 1000) >= n) return sec;
+  }
+  return null;
 }
 
 /** How this many photos actually paces in a reel of this length. */
@@ -67,9 +85,7 @@ export function pacingFor(
   const physicalCapacity = templateCapacity(template, durationMs);
   const perPhotoMs = photoCount > 0 ? durationMs / photoCount : durationMs;
   const rushed = photoCount > comfortableCapacity;
-  const neededSec = rushed
-    ? [12, 15].find((sec) => templateComfortableCapacity(template, sec * 1000) >= photoCount) ?? null
-    : null;
+  const neededSec = rushed ? estimateDurationSec(template, photoCount) : null;
   return { photoCount, perPhotoMs, comfortableCapacity, physicalCapacity, rushed, neededSec };
 }
 

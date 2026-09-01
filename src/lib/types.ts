@@ -142,7 +142,18 @@ export type TemplateId =
   | 'editorial-minimal'
   | 'photo-story';
 
-export type ReelDuration = 9 | 12 | 15;
+/**
+ * Reel length in whole seconds. 9 / 12 / 15 are the quick-pick defaults, but
+ * any whole number within MIN/MAX_REEL_DURATION_SEC is valid — the user can
+ * type their own.
+ */
+export type ReelDuration = number;
+export const REEL_DURATION_PRESETS: ReelDuration[] = [9, 12, 15];
+export const MIN_REEL_DURATION_SEC = 5;
+export const MAX_REEL_DURATION_SEC = 60;
+
+export const clampReelDuration = (sec: number): ReelDuration =>
+  Math.min(MAX_REEL_DURATION_SEC, Math.max(MIN_REEL_DURATION_SEC, Math.round(sec)));
 
 /**
  * What job the reel is doing. Purpose controls EDITORIAL PRIORITIES

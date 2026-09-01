@@ -17,11 +17,12 @@ import { CropModal } from '../components/CropModal';
 import { Modal } from '../components/Modal';
 import { loadResources, type LoadedResources } from '../lib/engine/resources';
 import { ReelPlayer } from '../lib/engine/preview';
-import { TEMPLATES, getTemplate, pacingFor } from '../lib/engine/templates';
+import { TEMPLATES, getTemplate, pacingFor, estimateDurationSec } from '../lib/engine/templates';
 import { useRebuildStatus } from '../lib/rebuildStatus';
 import { useBlobUrl } from '../components/hooks';
 import { useToasts } from '../components/toast';
-import type { NRect, ReelDuration, ReelPurpose, ReelRecord, TemplateId } from '../lib/types';
+import { clampReelDuration, MAX_REEL_DURATION_SEC, MIN_REEL_DURATION_SEC, REEL_DURATION_PRESETS } from '../lib/types';
+import type { NRect, ReelPurpose, ReelRecord, TemplateId } from '../lib/types';
 import type { Timeline } from '../lib/engine/types';
 
 function StripThumb({
@@ -153,9 +154,14 @@ export function EditorScreen() {
   const [igModalOpen, setIgModalOpen] = useState(false);
   const [styleChooserOpen, setStyleChooserOpen] = useState(false);
   const [cropPhotoId, setCropPhotoId] = useState<string | null>(null);
+  const [durationInput, setDurationInput] = useState('');
   const musicInputRef = useRef<HTMLInputElement>(null);
 
   const reel = useLiveQuery(() => (reelId ? db.reels.get(reelId) : undefined), [reelId]);
+  // Keep the custom-length field in sync with the reel unless it's being typed in.
+  useEffect(() => {
+    if (reel) setDurationInput(String(reel.durationSec));
+  }, [reel?.durationSec]);
   const photos = useLiveQuery(
     () => (reelId ? db.photos.where('reelId').equals(reelId).toArray() : []),
     [reelId],
@@ -277,6 +283,19 @@ export function EditorScreen() {
       setEnded(false);
     }
   };
+
+  const applyCustomDuration = () => {
+    const parsed = Number(durationInput);
+    if (!Number.isFinite(parsed)) {
+      setDurationInput(String(reel.durationSec));
+      return;
+    }
+    const clamped = clampReelDuration(parsed);
+    setDurationInput(String(clamped));
+    if (clamped !== reel.durationSec) void patchAndRebuild({ durationSec: clamped });
+  };
+
+  const includedCount = photos.filter((p) => p.included).length;
 
   const template = reel.templateId ? getTemplate(reel.templateId) : null;
   const pacing = template
@@ -442,7 +461,7 @@ export function EditorScreen() {
                 {pacing.neededSec && (
                   <button
                     className="btn btn-secondary btn-sm"
-                    onClick={() => void patchAndRebuild({ durationSec: pacing.neededSec as ReelDuration })}
+                    onClick={() => void patchAndRebuild({ durationSec: pacing.neededSec! })}
                   >
                     Use {pacing.neededSec}s
                   </button>
@@ -586,8 +605,8 @@ export function EditorScreen() {
             </div>
             <div className="field">
               <label>Length</label>
-              <div className="row">
-                {([9, 12, 15] as ReelDuration[]).map((d) => (
+              <div className="row wrap">
+                {REEL_DURATION_PRESETS.map((d) => (
                   <button
                     key={d}
                     className={`btn btn-sm ${reel.durationSec === d ? 'btn-primary' : 'btn-secondary'}`}
@@ -596,7 +615,54 @@ export function EditorScreen() {
                     {d}s
                   </button>
                 ))}
+                <span className="row" style={{ gap: 6 }}>
+                  <input
+                    type="number"
+                    min={MIN_REEL_DURATION_SEC}
+                    max={MAX_REEL_DURATION_SEC}
+                    value={durationInput}
+                    onChange={(e) => setDurationInput(e.target.value)}
+                    onBlur={() => applyCustomDuration()}
+                    onKeyDown={(e) => e.key === 'Enter' && applyCustomDuration()}
+                    style={{
+                      width: 64,
+                      background: 'var(--paper-raised)',
+                      border: '1px solid var(--line-strong)',
+                      borderRadius: 8,
+                      padding: '7px 8px',
+                      textAlign: 'center',
+                    }}
+                    aria-label="Custom length in seconds"
+                  />
+                  <span className="faint">s (custom)</span>
+                </span>
               </div>
+              {includedCount > 0 && template && (
+                <span className="hint">
+                  {(() => {
+                    const natural = estimateDurationSec(template, includedCount);
+                    if (natural === null) {
+                      return `${includedCount} included photos won’t fit comfortably even at ${MAX_REEL_DURATION_SEC}s with ${template.name} — try Rapid Fire.`;
+                    }
+                    if (natural === reel.durationSec) {
+                      return `${includedCount} included photos fit ${template.name}’s pace right at ${reel.durationSec}s.`;
+                    }
+                    return `${includedCount} included photos would naturally fill about ${natural}s with ${template.name}.`;
+                  })()}
+                  {(() => {
+                    const natural = estimateDurationSec(template, includedCount);
+                    return natural !== null && natural !== reel.durationSec ? (
+                      <button
+                        className="btn btn-ghost btn-sm"
+                        style={{ marginLeft: 6, padding: '2px 8px', minHeight: 'auto' }}
+                        onClick={() => void patchAndRebuild({ durationSec: natural })}
+                      >
+                        Use {natural}s
+                      </button>
+                    ) : null;
+                  })()}
+                </span>
+              )}
               {pacing && template && (
                 <span className="hint">
                   {(() => {

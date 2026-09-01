@@ -4,9 +4,10 @@
 // (the parent test matters most here), but nothing is dropped.
 
 import type { StyleTraits } from '../../editorial/plan';
-import type { SequencePhoto } from '../sequence';
+import { mulberry32, type SequencePhoto } from '../sequence';
 import { planTreatment } from '../layout';
 import { uid } from '../../ids';
+import type { Transition } from '../types';
 import type { Timeline } from '../types';
 import {
   baseTimeline,
@@ -24,7 +25,7 @@ export const RAPID_MIN_SLIDE_MS = 120;
 /** How many photos a Rapid Fire reel of this duration can physically hold. */
 export function rapidFireCapacity(durationMs: number): number {
   // Opener ~0.7s and closer ~0.6s hold longer; the rest ride the floor.
-  return Math.floor((durationMs - 1300) / RAPID_MIN_SLIDE_MS) + 2;
+  return Math.max(3, Math.floor((durationMs - 1300) / RAPID_MIN_SLIDE_MS) + 2);
 }
 
 const TRAITS: StyleTraits = {
@@ -38,7 +39,26 @@ const TRAITS: StyleTraits = {
   maxBurstFrames: 2,
 };
 
+/**
+ * Below this a transition would eat the whole slide — stay a hard cut so
+ * the photo itself still registers. Above it, an occasional quick fade or
+ * flick gives the flashes some texture instead of being pure strobing.
+ */
+const MIN_SLIDE_FOR_TRANSITION_MS = 260;
+const TRANSITION_CHANCE = 0.3;
+
+/** A transition short enough to never dominate a very brief slide. */
+function rapidTransition(clipMs: number, rand: () => number): Transition {
+  if (clipMs < MIN_SLIDE_FOR_TRANSITION_MS || rand() >= TRANSITION_CHANCE) {
+    return { kind: 'cut', durationMs: 0 };
+  }
+  const durationMs = Math.min(90, Math.round(clipMs * 0.25));
+  const kind = rand() < 0.5 ? 'fade' : 'push-left';
+  return { kind, durationMs };
+}
+
 export function buildRapidFire(photos: SequencePhoto[], ctx: TemplateContext): Timeline {
+  const rand = mulberry32(ctx.seed);
   const slots = editorialSlots(photos, ctx, TRAITS, rapidFireCapacity(ctx.durationMs));
   const sequence = slots.map((s) => s.photos[0]);
 
@@ -60,6 +80,7 @@ export function buildRapidFire(photos: SequencePhoto[], ctx: TemplateContext): T
   const clips = sequence.map((photo, i) => {
     const isEdge = i === 0 || i === sequence.length - 1;
     const plan = planTreatment(photo, TARGET_ASPECT, isEdge ? 'cover-push' : 'static');
+    const clipMs = windows[i].endMs - windows[i].startMs;
     return {
       id: uid(),
       startMs: windows[i].startMs,
@@ -74,7 +95,15 @@ export function buildRapidFire(photos: SequencePhoto[], ctx: TemplateContext): T
           fill: plan.fill,
         },
       ],
-      transitionIn: { kind: 'cut' as const, durationMs: 0 },
+      // The opener always cuts in hard; the closer favors a soft landing
+      // when its hold is long enough; everything else is mostly cuts with
+      // an occasional quick fade or flick for texture.
+      transitionIn:
+        i === 0
+          ? ({ kind: 'cut', durationMs: 0 } as const)
+          : i === sequence.length - 1 && clipMs >= MIN_SLIDE_FOR_TRANSITION_MS
+            ? { kind: 'fade' as const, durationMs: Math.min(120, Math.round(clipMs * 0.3)) }
+            : rapidTransition(clipMs, rand),
     };
   });
 

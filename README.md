@@ -19,11 +19,15 @@ session, choose the vibe, get a polished 9:16 MP4 — no video editing required.
   Professional photography is never altered — presentation-only transforms
   (crop, pan, gentle zoom, blurred background fill). Before/after compare and
   Restore Original per photo.
-- **Five genuinely different templates** — Signature Energy, Cinematic Story,
-  Quick Cut, Editorial Minimal, and Photo Story. Each is a reusable algorithm
-  that picks the sequence, opener/closer, crops, motion, pacing, stacked
-  layouts, and text-safe zones for any photo set. "Surprise Me" picks a
-  template from the character of the set.
+- **Six genuinely different templates** — Signature Energy, Cinematic Story,
+  Quick Cut, Rapid Fire, Editorial Minimal, and Photo Story. Each is a
+  reusable algorithm that picks the sequence, opener/closer, crops, motion,
+  pacing, stacked layouts, and text-safe zones for any photo set. "Surprise
+  Me" picks a template from the character of the set. Rapid Fire — built for
+  huge sets flashing by in well under a second each — stays almost entirely
+  hard cuts for readability, with an occasional brief fade or push-left on
+  slides that have room to spare, a guaranteed hard-cut opener, and a soft
+  landing on the closer.
 - **Face-safe layout** — faces are detected locally; crops never slice through
   a face, pans settle on the subject, and wide family groups fall back to a
   full-image treatment over a blurred backdrop rather than being chopped.
@@ -66,6 +70,11 @@ session, choose the vibe, get a polished 9:16 MP4 — no video editing required.
 - **Export** — 1080×1920 MP4 (H.264 + AAC) rendered deterministically in the
   browser via WebCodecs, with a preflight checklist (safety review, missing
   images, text bounds, fonts, audio) before the button unlocks.
+- **Type your own length** — the 9s/12s/15s buttons are quick picks, not the
+  limit. A custom number field (5–60s) sets any exact length. Next to it, a
+  live "N included photos would naturally fill about Ys with [Style]" hint
+  (with a one-tap "Use Ys") shows how long the current photo count would
+  comfortably fill, independent of whatever length is set right now.
 - **Restricted-child protection** — administrators register reference photos
   for children who must not appear in marketing. Face embeddings are computed
   **locally in the browser**, stored encrypted, and every upload is checked.

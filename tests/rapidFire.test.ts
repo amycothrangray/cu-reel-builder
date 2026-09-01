@@ -63,10 +63,55 @@ describe('Rapid Fire template', () => {
     expect(durations[durations.length - 1]).toBeGreaterThan(avgMiddle * 1.8);
   });
 
-  it('uses hard cuts and drops the caption', () => {
+  it('drops the caption but keeps the CTA', () => {
     const t = buildRapidFire(bigSet(50), ctx(12000));
-    expect(t.clips.every((c) => c.transitionIn.kind === 'cut')).toBe(true);
     expect(t.overlays.some((o) => o.kind === 'caption')).toBe(false);
     expect(t.overlays.some((o) => o.kind === 'cta')).toBe(true);
+  });
+
+  it('the opener always cuts in hard, whatever its hold length', () => {
+    const t = buildRapidFire(bigSet(100), ctx(9000));
+    expect(t.clips[0].transitionIn.kind).toBe('cut');
+    expect(t.clips[0].transitionIn.durationMs).toBe(0);
+  });
+
+  it('packed-to-the-floor slides stay pure hard cuts (no transition to spare)', () => {
+    const t = buildRapidFire(bigSet(100), ctx(9000));
+    // Every clip except possibly the closer is at/near the 90ms floor —
+    // far under the threshold a transition needs to not swallow the slide.
+    for (const clip of t.clips.slice(1, -1)) {
+      expect(clip.transitionIn.kind).toBe('cut');
+    }
+  });
+
+  it('a transition never lasts longer than the slide it belongs to', () => {
+    for (const durationMs of [9000, 12000, 15000]) {
+      const t = buildRapidFire(bigSet(60), ctx(durationMs));
+      for (const clip of t.clips) {
+        const clipMs = clip.endMs - clip.startMs;
+        expect(clip.transitionIn.durationMs).toBeLessThanOrEqual(clipMs);
+        expect(clip.transitionIn.durationMs).toBeLessThanOrEqual(120);
+      }
+    }
+  });
+
+  it('gives longer slides occasional texture instead of pure strobing', () => {
+    // Few photos over a longer reel => generous per-slide time, so some
+    // non-cut transitions should appear given the deterministic seed.
+    const t = buildRapidFire(bigSet(24), ctx(15000));
+    const nonCuts = t.clips.filter((c) => c.transitionIn.kind !== 'cut');
+    expect(nonCuts.length).toBeGreaterThan(0);
+    for (const clip of nonCuts) {
+      expect(['fade', 'push-left']).toContain(clip.transitionIn.kind);
+    }
+  });
+
+  it('is deterministic: the same seed produces the same transitions', () => {
+    // ctx() always carries seed: 3, so two calls are already same-seed.
+    const a = buildRapidFire(bigSet(24), ctx(15000));
+    const b = buildRapidFire(bigSet(24), ctx(15000));
+    expect(a.clips.map((c) => c.transitionIn.kind)).toEqual(
+      b.clips.map((c) => c.transitionIn.kind),
+    );
   });
 });
