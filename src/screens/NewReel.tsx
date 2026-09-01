@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { createReel } from '../lib/reels';
 import { ingestFiles, type IngestProgress } from '../lib/analysis/ingest';
 import { enrichWithAi } from '../lib/analysis/aiVision';
+import { chooseFromDropbox, dropboxConfigured } from '../lib/dropbox';
 import { useToasts } from '../components/toast';
 
 const ACCEPT = 'image/jpeg,image/png,image/heic,image/heif,.heic,.heif,.jpg,.jpeg,.png';
@@ -13,6 +14,7 @@ export function NewReelScreen() {
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
   const [progress, setProgress] = useState<IngestProgress | null>(null);
+  const [dropboxBusy, setDropboxBusy] = useState(false);
 
   const handleFiles = useCallback(
     async (fileList: FileList | File[]) => {
@@ -102,6 +104,33 @@ export function NewReelScreen() {
           }}
         />
       </div>
+
+      {dropboxConfigured && (
+        <div style={{ textAlign: 'center', marginTop: 16 }}>
+          <button
+            className="btn btn-secondary"
+            disabled={dropboxBusy}
+            onClick={async () => {
+              setDropboxBusy(true);
+              try {
+                const files = await chooseFromDropbox();
+                if (files.length > 0) await handleFiles(files);
+              } catch (err) {
+                show(
+                  'Dropbox import didn’t work — try again.',
+                  'error',
+                  err instanceof Error ? err.message : String(err),
+                );
+              } finally {
+                setDropboxBusy(false);
+              }
+            }}
+          >
+            {dropboxBusy ? <span className="spinner" /> : null} Import from Dropbox
+          </button>
+        </div>
+      )}
+
       <p className="faint" style={{ marginTop: 14, textAlign: 'center' }}>
         Your photos stay on this device — analysis happens right here in your browser.
       </p>

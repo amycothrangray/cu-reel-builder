@@ -8,6 +8,7 @@ import { renderCorrected } from '../lib/imaging/correction';
 import { canvasToBlob } from '../lib/imaging/decode';
 import { matchConfidenceLabel } from '../lib/restricted/matching';
 import { ingestFiles } from '../lib/analysis/ingest';
+import { chooseFromDropbox, dropboxConfigured } from '../lib/dropbox';
 import { enrichWithAi } from '../lib/analysis/aiVision';
 import { addPhotosToArrangement, rebuildActiveVersion, removePhotosFromArrangement } from '../lib/reels';
 import { getTemplate, templateCapacity } from '../lib/engine/templates';
@@ -372,6 +373,7 @@ export function PhotoReviewScreen() {
   const navigate = useNavigate();
   const show = useToasts((s) => s.show);
   const addInputRef = useRef<HTMLInputElement>(null);
+  const [dropboxBusy, setDropboxBusy] = useState(false);
   const [openPhotoId, setOpenPhotoId] = useState<string | null>(null);
   const [selecting, setSelecting] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -481,6 +483,34 @@ export function PhotoReviewScreen() {
         <button className="btn btn-secondary" onClick={() => addInputRef.current?.click()}>
           Add photos
         </button>
+        {dropboxConfigured && (
+          <button
+            className="btn btn-secondary"
+            disabled={dropboxBusy}
+            onClick={async () => {
+              if (!reelId) return;
+              setDropboxBusy(true);
+              try {
+                const files = await chooseFromDropbox();
+                if (files.length > 0) {
+                  const newIds = await ingestFiles(reelId, files);
+                  void enrichWithAi(reelId);
+                  if (newIds.length > 0) await addToReel(newIds);
+                }
+              } catch (err) {
+                show(
+                  'Dropbox import didn’t work — try again.',
+                  'error',
+                  err instanceof Error ? err.message : String(err),
+                );
+              } finally {
+                setDropboxBusy(false);
+              }
+            }}
+          >
+            {dropboxBusy ? <span className="spinner" /> : null} From Dropbox
+          </button>
+        )}
         {reel.templateId ? (
           <Link to={`/reel/${reel.id}/edit`} className="btn btn-primary btn-lg">
             Back to editor

@@ -43,6 +43,13 @@ session, choose the vibe, get a polished 9:16 MP4 — no video editing required.
 - **Versioning** — "Try Another Edit" creates a new arrangement as a new
   version (in the same style or any other); earlier versions are never
   destroyed.
+- **Import from Dropbox** — when a Dropbox App key is configured, an
+  "Import from Dropbox" button appears on the upload screen and on "Add
+  photos" in the photo review screen. It uses Dropbox's own file picker
+  (Chooser) — Dropbox handles sign-in in its own popup, this app never sees
+  a Dropbox password, and picked files go straight into the same local
+  ingestion pipeline as any other upload. See `.env.example` for how to
+  get an App key.
 - **Fix framing anywhere** — tap ⛶ on any photo in the editor's photo strip
   (or open it from the photos page) to drag and zoom a 9:16 crop. The strip
   thumbnail then shows that exact framing, and the reel rebuilds around it.
