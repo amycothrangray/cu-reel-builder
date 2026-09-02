@@ -11,22 +11,40 @@ import { ingestFiles } from '../lib/analysis/ingest';
 import { chooseFromDropbox, dropboxConfigured } from '../lib/dropbox';
 import { enrichWithAi } from '../lib/analysis/aiVision';
 import { addPhotosToArrangement, rebuildActiveVersion, removePhotosFromArrangement } from '../lib/reels';
-import { getTemplate, templateCapacity } from '../lib/engine/templates';
+import { getTemplate, templateComfortableCapacity } from '../lib/engine/templates';
 import { useBlobUrl, invalidateBlobUrl } from '../components/hooks';
 import { Modal } from '../components/Modal';
 import { CropEditor } from '../components/CropEditor';
 import { useAdminAction } from '../components/AdminGate';
 import { useToasts } from '../components/toast';
 
-function Badges({ photo, reelIndex }: { photo: PhotoRecord; reelIndex?: number }) {
+function Badges({
+  photo,
+  reelIndex,
+  required,
+}: {
+  photo: PhotoRecord;
+  reelIndex?: number;
+  /** Photo the user has guaranteed a place in the reel. */
+  required?: boolean;
+}) {
   const cls = effectiveClassification(photo);
-  const flagged = photo.restrictedFlags.some((f) => f.status === 'pending' || f.status === 'blocked');
+  const needsReview = photo.restrictedFlags.some((f) => f.status === 'pending');
+  const blocked = photo.restrictedFlags.some((f) => f.status === 'blocked');
   return (
     <div className="badges">
-      {flagged && <span className="badge badge-restricted">Restricted?</span>}
+      {needsReview && <span className="badge badge-restricted">Restricted?</span>}
+      {/* A decision she already made is settled — it shouldn't keep shouting. */}
+      {!needsReview && blocked && <span className="badge">Blocked</span>}
       {reelIndex !== undefined && (
         <span className="badge badge-recommended">In reel · {reelIndex + 1}</span>
       )}
+      {required && (
+        <span className="badge" style={{ color: 'var(--accent-ink)' }}>
+          Must appear
+        </span>
+      )}
+      {!photo.included && !blocked && <span className="badge">Not in this reel</span>}
       {cls === 'pro' && <span className="badge badge-pro">Pro</span>}
       {cls === 'mobile' && <span className="badge badge-mobile">Mobile</span>}
       {photo.correctionEnabled && photo.hasCorrected && (
@@ -40,19 +58,23 @@ function Badges({ photo, reelIndex }: { photo: PhotoRecord; reelIndex?: number }
 function PhotoCell({
   photo,
   reelIndex,
+  required,
   duplicate,
   onOpen,
 }: {
   photo: PhotoRecord;
   reelIndex?: number;
+  required?: boolean;
   duplicate: boolean;
   onOpen: () => void;
 }) {
   const thumbUrl = useBlobUrl(photo.status !== 'ingesting' ? blobKey.thumb(photo.id) : null);
-  const flagged = photo.restrictedFlags.some((f) => f.status === 'pending' || f.status === 'blocked');
+  const needsReview = photo.restrictedFlags.some((f) => f.status === 'pending');
+  const blocked = photo.restrictedFlags.some((f) => f.status === 'blocked');
   return (
     <div
-      className={`photo-cell ${photo.included ? '' : 'excluded'} ${flagged ? 'flagged' : ''}`}
+      className={`photo-cell ${photo.included ? '' : 'excluded'} ${needsReview ? 'flagged' : ''}`}
+      style={blocked && !needsReview ? { borderColor: 'var(--line-strong)' } : undefined}
       onClick={onOpen}
     >
       {thumbUrl ? (
@@ -64,7 +86,7 @@ function PhotoCell({
       )}
       {photo.status === 'ready' && (
         <>
-          <Badges photo={photo} reelIndex={reelIndex} />
+          <Badges photo={photo} reelIndex={reelIndex} required={required} />
           {duplicate && (
             <span className="badge badge-duplicate" style={{ position: 'absolute', top: 6, right: 6 }}>
               Duplicate
@@ -83,9 +105,33 @@ function PhotoCell({
 
 // ---------------------------------------------------------------------------
 
+/**
+ * Render the gentle correction for one photo. Returns false when the photo
+ * already sits well next to professional work and nothing was changed.
+ * Shared so single-photo and bulk paths do exactly the same work.
+ */
+async function renderCorrectionFor(p: PhotoRecord): Promise<boolean> {
+  const blob = await getBlob(blobKey.preview(p.id));
+  if (!blob || !p.analysis) return false;
+  const bitmap = await createImageBitmap(blob);
+  const canvas = document.createElement('canvas');
+  canvas.width = bitmap.width;
+  canvas.height = bitmap.height;
+  canvas.getContext('2d')!.drawImage(bitmap, 0, 0);
+  const { canvas: corrected, changed } = renderCorrected(canvas, p.analysis.stats);
+  bitmap.close();
+  if (!changed) return false;
+  await putBlob(blobKey.corrected(p.id), await canvasToBlob(corrected, 'image/jpeg', 0.92));
+  invalidateBlobUrl(blobKey.corrected(p.id));
+  await db.photos.update(p.id, { hasCorrected: true, correctionEnabled: true });
+  return true;
+}
+
 function DetailModal({
   photo,
   reelPosition,
+  required,
+  hasTemplate,
   onAddToReel,
   onRemoveFromReel,
   onClose,
@@ -94,6 +140,10 @@ function DetailModal({
   photo: PhotoRecord;
   /** Position in the current arrangement, if the photo is in it. */
   reelPosition?: number;
+  /** The user has guaranteed this photo a place in the reel. */
+  required: boolean;
+  /** A style has been chosen, so there is an arrangement to add to. */
+  hasTemplate: boolean;
   onAddToReel: () => void;
   onRemoveFromReel: () => void;
   onClose: () => void;
@@ -110,37 +160,20 @@ function DetailModal({
   const cls = effectiveClassification(photo);
   const showingCorrected =
     photo.correctionEnabled && photo.hasCorrected && correctedUrl && !showOriginal;
-  const pendingFlags = photo.restrictedFlags.filter(
-    (f) => f.status === 'pending' || f.status === 'blocked',
-  );
+  const pendingFlags = photo.restrictedFlags.filter((f) => f.status === 'pending');
+  const blockedFlags = photo.restrictedFlags.filter((f) => f.status === 'blocked');
 
   const setOverride = async (value: 'pro' | 'mobile' | undefined) => {
     const patch: Partial<PhotoRecord> = { overrideClassification: value };
     if (value === 'pro') patch.correctionEnabled = false;
     await db.photos.update(photo.id, patch);
     if (value === 'mobile' && !photo.hasCorrected && photo.analysis) {
-      await renderCorrectionFor(photo);
+      const corrected = await renderCorrectionFor(photo);
+      if (!corrected) {
+        show('This photo already sits well next to professional work — no correction needed.');
+      }
     }
     onChanged();
-  };
-
-  const renderCorrectionFor = async (p: PhotoRecord) => {
-    const blob = await getBlob(blobKey.preview(p.id));
-    if (!blob || !p.analysis) return;
-    const bitmap = await createImageBitmap(blob);
-    const canvas = document.createElement('canvas');
-    canvas.width = bitmap.width;
-    canvas.height = bitmap.height;
-    canvas.getContext('2d')!.drawImage(bitmap, 0, 0);
-    const { canvas: corrected, changed } = renderCorrected(canvas, p.analysis.stats);
-    bitmap.close();
-    if (changed) {
-      await putBlob(blobKey.corrected(p.id), await canvasToBlob(corrected, 'image/jpeg', 0.92));
-      invalidateBlobUrl(blobKey.corrected(p.id));
-      await db.photos.update(p.id, { hasCorrected: true, correctionEnabled: true });
-    } else {
-      show('This photo already sits well next to professional work — no correction needed.');
-    }
   };
 
   const saveCrop = async (crop: NRect | undefined) => {
@@ -150,24 +183,21 @@ function DetailModal({
     show(crop ? 'Crop saved — the reel will use this framing.' : 'Custom crop removed.');
   };
 
-  const reviewFlag = async (
-    profileId: string,
-    status: 'safe' | 'blocked' | 'removed',
-  ) => {
+  const reviewFlag = async (profileId: string, status: 'safe' | 'blocked') => {
+    const wasBlocked = photo.restrictedFlags.some(
+      (f) => f.profileId === profileId && f.status === 'blocked',
+    );
     const apply = async () => {
-      if (status === 'removed') {
-        await auditLog('admin', 'restricted-remove-photo', `photo ${photo.fileName}`);
-        await deletePhotoCompletely(photo.id);
-        onChanged();
-        onClose();
-        return;
-      }
       const flags = photo.restrictedFlags.map((f) =>
         f.profileId === profileId ? { ...f, status, reviewedAt: Date.now(), reviewedBy: 'admin' } : f,
       );
+      const stillBlocked = flags.some((f) => f.status === 'blocked');
       await db.photos.update(photo.id, {
         restrictedFlags: flags,
+        // Blocking takes the photo out of the reel; lifting the last block
+        // puts it back, so the decision and the result always agree.
         ...(status === 'blocked' ? { included: false } : {}),
+        ...(status === 'safe' && wasBlocked && !stillBlocked ? { included: true } : {}),
       });
       await auditLog(
         'admin',
@@ -175,12 +205,46 @@ function DetailModal({
         `photo ${photo.fileName}, profile ${profileId}`,
       );
       onChanged();
+      show(
+        status === 'blocked'
+          ? 'Blocked — this photo stays out of the reel.'
+          : 'Marked safe — this photo can appear in the reel again.',
+      );
     };
     if (status === 'safe') {
       requireAdmin(() => void apply());
     } else {
       await apply();
     }
+  };
+
+  /**
+   * Permanent: the photo and every version of it leave this device. Name the
+   * file so nobody deletes the wrong one, and ask for the admin PIN whenever
+   * a restricted-child review is involved — the same gate as "Mark as Safe".
+   */
+  const deletePhotoForever = () => {
+    const restricted = photo.restrictedFlags.length > 0;
+    const ok = window.confirm(
+      `Delete “${photo.fileName}” from this device?\n\n` +
+        'The photo, its crop and its correction are erased for good. This cannot be undone.',
+    );
+    if (!ok) return;
+    const run = () => {
+      void (async () => {
+        await auditLog(
+          restricted ? 'admin' : 'user',
+          restricted ? 'restricted-remove-photo' : 'delete-photo',
+          `photo ${photo.fileName}`,
+        );
+        await deletePhotoCompletely(photo.id);
+        onChanged();
+        onClose();
+        show(`“${photo.fileName}” was deleted from this device.`);
+      })();
+    };
+    if (restricted) requireAdmin(run);
+    else run();
   };
 
   return (
@@ -217,16 +281,38 @@ function DetailModal({
                 <span className="faint">({matchConfidenceLabel(flag.distance)})</span>
               </p>
               <div className="row wrap" style={{ marginTop: 8 }}>
-                <button className="btn btn-danger btn-sm" onClick={() => void reviewFlag(flag.profileId, 'removed')}>
-                  Remove Photo
-                </button>
-                <button className="btn btn-secondary btn-sm" onClick={() => void reviewFlag(flag.profileId, 'blocked')}>
-                  Keep Blocked
-                </button>
                 <button className="btn btn-secondary btn-sm" onClick={() => void reviewFlag(flag.profileId, 'safe')}>
                   Mark as Safe
                 </button>
+                <button className="btn btn-secondary btn-sm" onClick={() => void reviewFlag(flag.profileId, 'blocked')}>
+                  Keep out of this reel
+                </button>
+                {/* Last, and named for what it does — this erases the file. */}
+                <button className="btn btn-danger btn-sm" onClick={deletePhotoForever}>
+                  Delete photo
+                </button>
               </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {blockedFlags.length > 0 && pendingFlags.length === 0 && (
+        <div className="panel" style={{ background: 'var(--paper-sunken)', marginBottom: 16 }}>
+          <h3 style={{ marginBottom: 6 }}>
+            Blocked for {blockedFlags.map((f) => f.profileLabel).join(', ')} — kept out of this reel
+          </h3>
+          <p className="muted" style={{ fontSize: 13.5, marginBottom: 12 }}>
+            You’ve already reviewed this one. It stays out of the reel and out of anything you
+            export. You can change your mind at any time.
+          </p>
+          {blockedFlags.map((flag) => (
+            <div key={flag.profileId} className="row wrap" style={{ marginBottom: 8 }}>
+              <span style={{ fontSize: 14 }}>{flag.profileLabel}</span>
+              <div className="spacer" />
+              <button className="btn btn-secondary btn-sm" onClick={() => void reviewFlag(flag.profileId, 'safe')}>
+                This isn’t them — mark as safe
+              </button>
             </div>
           ))}
         </div>
@@ -252,7 +338,7 @@ function DetailModal({
                 style={{ width: '100%', display: 'block', maxHeight: '48vh', objectFit: 'contain' }}
               />
             )}
-            {pendingFlags.map((flag, i) => (
+            {[...pendingFlags, ...blockedFlags].map((flag, i) => (
               <div
                 key={i}
                 style={{
@@ -261,7 +347,9 @@ function DetailModal({
                   top: `${flag.face.y * 100}%`,
                   width: `${flag.face.w * 100}%`,
                   height: `${flag.face.h * 100}%`,
-                  border: '2px solid var(--danger)',
+                  border: `2px solid ${
+                    flag.status === 'pending' ? 'var(--danger)' : 'var(--line-strong)'
+                  }`,
                   borderRadius: 4,
                 }}
               />
@@ -337,28 +425,30 @@ function DetailModal({
           <>
             <span className="faint">In the reel — position {reelPosition + 1}</span>
             <button className="btn btn-secondary btn-sm" onClick={onRemoveFromReel}>
-              Remove from reel
+              Take out of this reel
+            </button>
+          </>
+        ) : required ? (
+          <>
+            <span className="faint">Set to appear once you choose a style</span>
+            <button className="btn btn-secondary btn-sm" onClick={onRemoveFromReel}>
+              Take out of this reel
             </button>
           </>
         ) : (
+          // Before a style exists there is nothing to add to, so the button
+          // promises only what actually happens: this photo will be in it.
           <button className="btn btn-primary btn-sm" onClick={onAddToReel}>
-            Add to reel
+            {hasTemplate ? 'Add to reel' : 'Must appear in the reel'}
           </button>
         )}
         <div className="spacer" />
         <button
           className="btn btn-ghost btn-sm"
           style={{ color: 'var(--danger)' }}
-          onClick={() => {
-            if (window.confirm('Remove this photo from the reel entirely?')) {
-              void deletePhotoCompletely(photo.id).then(() => {
-                onChanged();
-                onClose();
-              });
-            }
-          }}
+          onClick={deletePhotoForever}
         >
-          Remove photo
+          Delete photo
         </button>
       </div>
       <GateModal />
@@ -400,6 +490,9 @@ export function PhotoReviewScreen() {
     return map;
   }, [reel]);
 
+  // Photos the user has guaranteed a place in the reel.
+  const requiredIds = useMemo(() => new Set(reel?.requiredIds ?? []), [reel]);
+
   const duplicateIds = useMemo(() => {
     const seen: { id: string; phash: string }[] = [];
     const dupes = new Set<string>();
@@ -423,7 +516,11 @@ export function PhotoReviewScreen() {
   const inReelCount = inReelIndex.size;
 
   const template = reel.templateId ? getTemplate(reel.templateId) : null;
-  const capacity = template ? templateCapacity(template, reel.durationSec * 1000) : null;
+  // The pace the style promises — not the most photos that physically fit.
+  // Guiding by the physical floor pushes her into a rushed-looking reel.
+  const comfortable = template
+    ? templateComfortableCapacity(template, reel.durationSec * 1000)
+    : null;
 
   const refreshArrangement = () => {
     if (reelId) void rebuildActiveVersion(reelId);
@@ -432,9 +529,61 @@ export function PhotoReviewScreen() {
   const addToReel = async (ids: string[]) => {
     if (!reelId) return;
     await addPhotosToArrangement(reelId, ids);
-    if (capacity !== null && inReelCount + ids.length > capacity) {
+    if (!reel.templateId) {
+      // Nothing is arranged yet, so say what the click actually did.
       show(
-        `This style fits ${capacity} photos at ${reel.durationSec}s — some may not appear until you pick a longer length or a faster style.`,
+        ids.length === 1
+          ? 'Saved — this photo will be in the reel. Choose a style next and we’ll place it.'
+          : `Saved — those ${ids.length} photos will be in the reel. Choose a style next and we’ll place them.`,
+      );
+      return;
+    }
+    if (comfortable !== null && inReelCount + ids.length > comfortable) {
+      show(
+        `This style is at its best with about ${comfortable} photos at ${reel.durationSec}s — beyond that it starts to feel rushed. A longer reel or a faster style gives everyone room.`,
+      );
+    }
+  };
+
+  /**
+   * Every way photos arrive here lands in one place, so she always hears
+   * what actually came in — duplicates and unreadable files included.
+   */
+  const addPhotos = async (files: File[]) => {
+    if (!reelId || files.length === 0) return;
+    let failed = 0;
+    try {
+      const newIds = await ingestFiles(reelId, files, (p) => {
+        failed = p.failed;
+      });
+      void enrichWithAi(reelId);
+      // New uploads go straight into the current arrangement.
+      if (newIds.length > 0) await addToReel(newIds);
+      const duplicates = files.length - newIds.length - failed;
+      if (failed > 0 || duplicates > 0) {
+        const parts: string[] = [];
+        parts.push(
+          newIds.length === 0
+            ? 'No new photos were added.'
+            : `Added ${newIds.length} photo${newIds.length === 1 ? '' : 's'}.`,
+        );
+        if (duplicates > 0) {
+          parts.push(
+            `${duplicates} ${duplicates === 1 ? 'was already here' : 'were already here'}, so we kept the copy you had.`,
+          );
+        }
+        if (failed > 0) {
+          parts.push(
+            `${failed} couldn’t be opened — that file type may not work in this browser.`,
+          );
+        }
+        show(parts.join(' '), failed > 0 ? 'error' : 'info');
+      }
+    } catch (err) {
+      show(
+        'We couldn’t add those photos. Nothing already here was touched — try again.',
+        'error',
+        err instanceof Error ? err.message : String(err),
       );
     }
   };
@@ -454,6 +603,29 @@ export function PhotoReviewScreen() {
     refreshArrangement();
   };
 
+  /**
+   * Allowing correction has to do the same work as the single-photo path:
+   * mark the photo as mobile AND actually render the corrected version.
+   */
+  const bulkAllowCorrection = async () => {
+    const ids = [...selected];
+    setSelected(new Set());
+    setSelecting(false);
+    let corrected = 0;
+    for (const id of ids) {
+      const p = photos.find((x) => x.id === id);
+      if (!p) continue;
+      await db.photos.update(id, { overrideClassification: 'mobile' });
+      if (!p.hasCorrected && p.analysis && (await renderCorrectionFor(p))) corrected++;
+    }
+    refreshArrangement();
+    show(
+      corrected > 0
+        ? `Gentle correction added to ${corrected} photo${corrected === 1 ? '' : 's'}.`
+        : 'Those already sit well next to your professional work — nothing needed changing.',
+    );
+  };
+
   const bulkReel = async (include: boolean) => {
     const ids = [...selected];
     setSelected(new Set());
@@ -470,7 +642,7 @@ export function PhotoReviewScreen() {
           <p className="muted" style={{ marginTop: 4 }}>
             {ready.length} photos
             {inReelCount > 0
-              ? ` · ${inReelCount} in the current reel${capacity !== null ? ` (fits up to ${capacity} at ${reel.durationSec}s)` : ''}`
+              ? ` · ${inReelCount} in the current reel${comfortable !== null ? ` (best with about ${comfortable} at ${reel.durationSec}s)` : ''}`
               : ''}
             {analyzing ? ' · still looking through a few…' : ''}
             {flaggedCount > 0 ? ` · ${flaggedCount} need review` : ''}
@@ -492,11 +664,7 @@ export function PhotoReviewScreen() {
               setDropboxBusy(true);
               try {
                 const files = await chooseFromDropbox();
-                if (files.length > 0) {
-                  const newIds = await ingestFiles(reelId, files);
-                  void enrichWithAi(reelId);
-                  if (newIds.length > 0) await addToReel(newIds);
-                }
+                await addPhotos(files);
               } catch (err) {
                 show(
                   'Dropbox import didn’t work — try again.',
@@ -560,7 +728,7 @@ export function PhotoReviewScreen() {
             Add to reel
           </button>
           <button className="btn btn-secondary btn-sm" onClick={() => void bulkReel(false)}>
-            Remove from reel
+            Take out of reel
           </button>
           <button
             className="btn btn-secondary btn-sm"
@@ -568,10 +736,7 @@ export function PhotoReviewScreen() {
           >
             Treat as Pro
           </button>
-          <button
-            className="btn btn-secondary btn-sm"
-            onClick={() => void bulk(() => ({ overrideClassification: 'mobile' }))}
-          >
+          <button className="btn btn-secondary btn-sm" onClick={() => void bulkAllowCorrection()}>
             Allow Correction
           </button>
         </div>
@@ -583,6 +748,7 @@ export function PhotoReviewScreen() {
             <PhotoCell
               photo={photo}
               reelIndex={inReelIndex.get(photo.id)}
+              required={requiredIds.has(photo.id)}
               duplicate={duplicateIds.has(photo.id)}
               onOpen={() => {
                 if (selecting) {
@@ -638,13 +804,11 @@ export function PhotoReviewScreen() {
         multiple
         hidden
         onChange={(e) => {
-          if (e.target.files?.length && reelId) {
-            void ingestFiles(reelId, Array.from(e.target.files)).then((newIds) => {
-              void enrichWithAi(reelId);
-              // New uploads go straight into the current arrangement.
-              if (newIds.length > 0) void addToReel(newIds);
-            });
-          }
+          const files = Array.from(e.target.files ?? []);
+          // Clear it right away, or choosing the very same files again after
+          // a failure never fires this and the button looks broken.
+          e.target.value = '';
+          void addPhotos(files);
         }}
       />
 
@@ -652,6 +816,8 @@ export function PhotoReviewScreen() {
         <DetailModal
           photo={openPhoto}
           reelPosition={inReelIndex.get(openPhoto.id)}
+          required={requiredIds.has(openPhoto.id)}
+          hasTemplate={reel.templateId !== null}
           onAddToReel={() => void addToReel([openPhoto.id])}
           onRemoveFromReel={() => void removeFromReel([openPhoto.id])}
           onClose={() => setOpenPhotoId(null)}

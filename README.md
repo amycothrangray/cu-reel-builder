@@ -66,10 +66,33 @@ session, choose the vibe, get a polished 9:16 MP4 — no video editing required.
   as well as a physical floor. Too many photos for the time slot means fewer
   photos, never a faster reel: the engine stops selecting at the style's
   pace, and photos *you* added are always kept with a plain warning plus
-  one-tap fixes (longer reel, or a style built for that speed).
+  one-tap fixes (longer reel, or a style built for that speed). Where the two
+  numbers differ, every screen quotes the comfortable one — "best with 6–10
+  photos" is what the engine will actually do, not the absolute maximum.
+- **Nothing is dropped in silence** — a 9-second reel can only hold so many
+  photographs. When photos you added can't fit, the editor says exactly how
+  many and why, shows them greyed at the end of the strip, and offers the two
+  real fixes: the length that would hold them all, or a style that would.
+- **A manual order means what it says** — once you place photos by hand, the
+  reel is those photos in that order. Nudging one thumbnail never pulls in
+  others you didn't choose. Photos added later join the end of your list.
+- **Unknown is never treated as safe** — if the face model can't load, the
+  photos it couldn't check are held for review rather than passing as clear,
+  a failed check is never cached as a clean one, re-scanning repairs it, and
+  export stays blocked until a person has looked. Photos with an open or
+  blocked restricted flag are never sent to the optional AI route.
 - **Export** — 1080×1920 MP4 (H.264 + AAC) rendered deterministically in the
   browser via WebCodecs, with a preflight checklist (safety review, missing
-  images, text bounds, fonts, audio) before the button unlocks.
+  images, text bounds, fonts, audio) before the button unlocks. Export waits
+  for an in-flight rebuild rather than racing it, cancels cleanly if you leave,
+  hands you the finished video before saving a copy (so a full disk can't lose
+  the render), and names the file for what it really is when a browser falls
+  back to WebM.
+- **Versions keep their own settings** — editing a reel rebuilds the take
+  you're looking at, in the style it was made in. Going back to Version 1 and
+  changing the length no longer re-cuts it in Version 2's style, and the
+  moment any edit lands, a stale "Exported" download is retired instead of
+  being offered as if it were current.
 - **Type your own length** — the 9s/12s/15s buttons are quick picks, not the
   limit. A custom number field (5–60s) sets any exact length. Next to it, a
   live "N included photos would naturally fill about Ys with [Style]" hint

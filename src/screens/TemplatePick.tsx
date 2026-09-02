@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { useNavigate, useParams } from 'react-router-dom';
 import { db } from '../lib/db';
-import { TEMPLATES, surpriseMe, templateCapacity } from '../lib/engine/templates';
+import { TEMPLATES, surpriseMe, templateComfortableCapacity } from '../lib/engine/templates';
 import { toSequencePhoto, eligiblePhotos } from '../lib/engine/buildReel';
 import { generateVersion, touchReel } from '../lib/reels';
 import { useToasts } from '../components/toast';
@@ -167,8 +167,9 @@ export function TemplatePickScreen() {
                 {t.description}
               </p>
               <p className="faint">
-                {t.pace} · up to {templateCapacity(t, 9000)}–{templateCapacity(t, 15000)} photos ·{' '}
-                {t.idealFor}
+                {/* The pace the style promises, not the most that can be crammed in. */}
+                {t.pace} · best with {templateComfortableCapacity(t, 9000)}–
+                {templateComfortableCapacity(t, 15000)} photos · {t.idealFor}
               </p>
             </div>
             {building === t.id ? <span className="spinner" /> : <span style={{ color: 'var(--ink-faint)' }}>→</span>}

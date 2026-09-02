@@ -120,6 +120,9 @@ function swap(slots: PlanSlot[], i: number, j: number): PlanSlot[] {
 
 function candidateFixes(plan: EditorialPlan, opts: CritiqueOptions): Fix[] {
   if (opts.fixedOrder) return []; // the user's order is not ours to fix
+  // Nothing to rearrange below two slots — and with none at all the fixes
+  // below would reach past the end of the list.
+  if (plan.slots.length < 2) return [];
   const { profiles } = plan;
   const fixes: Fix[] = [];
 
@@ -197,6 +200,12 @@ export interface CritiqueResult {
 
 /** Critique → revise → re-critique until the plan is worth presenting. */
 export function refinePlan(plan: EditorialPlan, opts: CritiqueOptions): CritiqueResult {
+  // An empty plan is a real state (every photo excluded, or all blocked by a
+  // restricted-child review). It is the screen's job to explain that, not
+  // ours to crash on.
+  if (plan.slots.length === 0) {
+    return { plan, scores: critiquePlan(plan, opts), revisions: 0 };
+  }
   let best = plan;
   let bestScores = critiquePlan(plan, opts);
   let revisions = 0;

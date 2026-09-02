@@ -41,6 +41,12 @@ export function runPreflight(input: PreflightInput): PreflightFinding[] {
       level: 'block',
       message: `${blockers.blocked} blocked photo${blockers.blocked > 1 ? 's are' : ' is'} still marked as included. Remove or exclude ${blockers.blocked > 1 ? 'them' : 'it'}.`,
     });
+  } else if (blockers.unscreened > 0) {
+    findings.push({
+      id: 'restricted-unscreened',
+      level: 'block',
+      message: `${blockers.unscreened} photo${blockers.unscreened > 1 ? 's' : ''} couldn’t be checked against your restricted profiles — the face model didn’t load. Re-scan from Photo Restrictions, or review ${blockers.unscreened > 1 ? 'them' : 'it'} yourself before exporting.`,
+    });
   } else {
     findings.push({ id: 'restricted-ok', level: 'ok', message: 'Photo safety review complete.' });
   }

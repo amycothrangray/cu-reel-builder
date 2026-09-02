@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { Link, useParams } from 'react-router-dom';
-import { blobKey, db, getBlob, putBlob, trackUsage } from '../lib/db';
+import { blobKey, db, getBlob, invalidateBlobUrl, putBlob, trackUsage } from '../lib/db';
 import { getBrand, musicAnalysisForReel, touchReel } from '../lib/reels';
 import { formatTimestamp, syncCue, type SyncCue } from '../lib/audio/segments';
 import { useBlobUrl } from '../components/hooks';
+import { useRebuildStatus } from '../lib/rebuildStatus';
 import { loadResources } from '../lib/engine/resources';
 import { renderFrame } from '../lib/engine/renderFrame';
 import { selectProvider } from '../lib/engine/export/localProvider';
@@ -14,7 +15,7 @@ import {
   runPreflight,
   type PreflightFinding,
 } from '../lib/engine/export/preflight';
-import type { RenderProgress } from '../lib/engine/export/provider';
+import type { RenderProgress, VideoGenerationProvider } from '../lib/engine/export/provider';
 import { useToasts } from '../components/toast';
 import type { BrandConfig } from '../lib/types';
 
@@ -27,6 +28,11 @@ export function ExportScreen() {
   const [progress, setProgress] = useState<RenderProgress | null>(null);
   const [result, setResult] = useState<{ url: string; ext: string } | null>(null);
   const [cue, setCue] = useState<SyncCue | null>(null);
+  // A rebuild in flight means the arrangement on screen isn't the final one.
+  const rebuilding = useRebuildStatus((s) => s.pending > 0);
+  const aliveRef = useRef(true);
+  const jobRef = useRef<{ provider: VideoGenerationProvider; jobId: string } | null>(null);
+  const resultUrlRef = useRef<string | null>(null);
 
   const reel = useLiveQuery(() => (reelId ? db.reels.get(reelId) : undefined), [reelId]);
   const photos = useLiveQuery(
@@ -94,10 +100,33 @@ export function ExportScreen() {
     };
   }, [timeline, photos, reel]);
 
+  // Leaving mid-render has to actually stop the encoder — otherwise it keeps
+  // burning the device's battery on a video nobody will see. The finished
+  // file's object URL is ours to release too.
+  useEffect(() => {
+    aliveRef.current = true;
+    return () => {
+      aliveRef.current = false;
+      const job = jobRef.current;
+      jobRef.current = null;
+      if (job) void job.provider.cancel(job.jobId);
+      if (resultUrlRef.current) {
+        URL.revokeObjectURL(resultUrlRef.current);
+        resultUrlRef.current = null;
+      }
+    };
+  }, []);
+
   const estimatedSize = useMemo(
     () => (timeline ? estimateFileSizeBytes(timeline) : 0),
     [timeline],
   );
+
+  const showResult = (next: { url: string; ext: string } | null) => {
+    if (resultUrlRef.current) URL.revokeObjectURL(resultUrlRef.current);
+    resultUrlRef.current = next?.url ?? null;
+    setResult(next);
+  };
 
   if (!reel || !photos || !timeline) {
     return (
@@ -112,41 +141,71 @@ export function ExportScreen() {
     );
   }
 
-  const canExport = findings !== null && preflightPasses(findings) && !progress;
+  // Exporting while the preview is still being rebuilt would encode the old
+  // arrangement, so the button waits for the rebuild to land.
+  const canExport = findings !== null && preflightPasses(findings) && !progress && !rebuilding;
 
   const doExport = async () => {
     if (!brand || !activeVersion) return;
-    setResult(null);
+    showResult(null);
     setProgress({ fraction: 0, stage: 'Looking through your photos' });
     try {
       const provider = await selectProvider();
-      const job = await provider.createJob({ timeline, photos, brand }, setProgress);
+      const job = await provider.createJob({ timeline, photos, brand }, (p) => {
+        if (aliveRef.current) setProgress(p);
+      });
+      jobRef.current = { provider, jobId: job.id };
       // Wait for completion.
       let status = await provider.checkStatus(job.id);
       while (status.status === 'rendering' || status.status === 'queued') {
         await new Promise((r) => setTimeout(r, 300));
+        // The screen went away — cleanup has already asked the job to stop.
+        if (!aliveRef.current) return;
         status = await provider.checkStatus(job.id);
       }
+      if (status.status === 'canceled') return;
       if (status.status !== 'done') {
         throw new Error(status.error ?? 'Rendering did not finish');
       }
       const output = await provider.retrieveOutput(job.id);
-      await putBlob(blobKey.export(reel.id, activeVersion.id), output.blob);
-      await touchReel(reel.id, { status: 'exported', exportedAt: Date.now() });
-      await trackUsage('export', `${timeline.durationMs}ms ${output.fileExtension}`);
-      setResult({ url: URL.createObjectURL(output.blob), ext: output.fileExtension });
+      if (!aliveRef.current) return;
+
+      // Hand over the finished video first: if keeping a copy fails (a full
+      // disk, say), the user should still get the render they waited for.
+      showResult({ url: URL.createObjectURL(output.blob), ext: output.fileExtension });
       setProgress(null);
+      const exportKey = blobKey.export(reel.id, activeVersion.id);
+      try {
+        await putBlob(exportKey, output.blob);
+        // Home reads this key through the session URL cache — without this it
+        // would keep serving the previous render of the same version.
+        invalidateBlobUrl(exportKey);
+        await touchReel(reel.id, { status: 'exported', exportedAt: Date.now() });
+      } catch (err) {
+        show(
+          'Your reel is ready to download, but we couldn’t save a copy in the app — download it now.',
+          'error',
+          err instanceof Error ? err.message : String(err),
+        );
+      }
+      await trackUsage('export', `${timeline.durationMs}ms ${output.fileExtension}`);
     } catch (err) {
+      if (!aliveRef.current) return;
       setProgress(null);
       show(
         'We couldn’t finish this reel. Your photos are safe — try exporting again.',
         'error',
         err instanceof Error ? err.message : String(err),
       );
+    } finally {
+      jobRef.current = null;
     }
   };
 
   const fileName = `${reel.name.replace(/[^\w\- ]+/g, '').trim() || 'reel'}.${result?.ext ?? 'mp4'}`;
+  // Browsers without WebCodecs fall back to a MediaRecorder capture, which is
+  // usually WebM — so the format is only certain once the file exists.
+  const formatLabel = result ? result.ext.toUpperCase() : 'MP4 or WebM';
 
   return (
     <div style={{ maxWidth: 860, margin: '0 auto' }}>
@@ -171,7 +230,7 @@ export function ExportScreen() {
           <div className="panel">
             <h3 style={{ marginBottom: 10 }}>Final video</h3>
             <p className="muted" style={{ fontSize: 14.5 }}>
-              {reel.durationSec} seconds · 1080 × 1920 · MP4 · about{' '}
+              {reel.durationSec} seconds · 1080 × 1920 · {formatLabel} · about{' '}
               {(estimatedSize / 1024 / 1024).toFixed(0)} MB
             </p>
           </div>
@@ -243,9 +302,11 @@ export function ExportScreen() {
             <button className="btn btn-primary btn-lg" disabled={!canExport} onClick={() => void doExport()}>
               {progress
                 ? 'Rendering…'
-                : reel.instagramAudio
-                  ? 'Export for Instagram'
-                  : 'Export Reel'}
+                : rebuilding
+                  ? 'Preview still updating…'
+                  : reel.instagramAudio
+                    ? 'Export for Instagram'
+                    : 'Export Reel'}
             </button>
           )}
 

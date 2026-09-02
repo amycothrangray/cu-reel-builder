@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { createReel } from '../lib/reels';
+import { createReel, deleteReelCompletely } from '../lib/reels';
 import { ingestFiles, type IngestProgress } from '../lib/analysis/ingest';
 import { enrichWithAi } from '../lib/analysis/aiVision';
 import { chooseFromDropbox, dropboxConfigured } from '../lib/dropbox';
@@ -29,10 +29,47 @@ export function NewReelScreen() {
         const reel = await createReel();
         setProgress({ total: files.length, done: 0, failed: 0, stage: 'Looking through your photos' });
         // Analysis starts immediately — no separate "Analyze" button.
-        await ingestFiles(reel.id, files, setProgress);
+        // ingestFiles never rejects: unreadable files are counted as failures
+        // and repeats are dropped, so the counts are the only honest source.
+        let failed = 0;
+        const ingestedIds = await ingestFiles(reel.id, files, (p) => {
+          failed = p.failed;
+          setProgress(p);
+        });
+        const duplicates = files.length - ingestedIds.length - failed;
+
+        if (ingestedIds.length === 0) {
+          // Nothing came in — sending her to an empty review screen would
+          // just be a mystery. Stay here, clean up the empty reel, say why.
+          await deleteReelCompletely(reel.id);
+          setProgress(null);
+          show(
+            files.length === 1
+              ? 'We couldn’t open that photo — it may be a file type this browser can’t read. Nothing was lost.'
+              : `We couldn’t open any of those ${files.length} photos — they may be a file type this browser can’t read. Nothing was lost.`,
+            'error',
+          );
+          return;
+        }
+
         // Optional AI enrichment runs in the background; never blocks the flow.
         void enrichWithAi(reel.id);
         navigate(`/reel/${reel.id}/review`);
+
+        if (failed > 0 || duplicates > 0) {
+          const parts = [`Added ${ingestedIds.length} photo${ingestedIds.length === 1 ? '' : 's'}.`];
+          if (duplicates > 0) {
+            parts.push(
+              `${duplicates} ${duplicates === 1 ? 'was a repeat' : 'were repeats'}, so we kept one of each.`,
+            );
+          }
+          if (failed > 0) {
+            parts.push(
+              `${failed} couldn’t be opened — that file type may not work in this browser.`,
+            );
+          }
+          show(parts.join(' '), failed > 0 ? 'error' : 'info');
+        }
       } catch (err) {
         setProgress(null);
         show(
@@ -100,7 +137,11 @@ export function NewReelScreen() {
           multiple
           hidden
           onChange={(e) => {
-            if (e.target.files?.length) void handleFiles(e.target.files);
+            const files = Array.from(e.target.files ?? []);
+            // Clear it now, or choosing the same photos again after a failure
+            // never fires this and the button looks dead.
+            e.target.value = '';
+            if (files.length > 0) void handleFiles(files);
           }}
         />
       </div>

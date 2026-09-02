@@ -1,4 +1,4 @@
-import type { FaceBox, ImageStats } from '../src/lib/types';
+import type { FaceBox, ImageStats, PhotoRecord, ReelRecord } from '../src/lib/types';
 import type { SequencePhoto } from '../src/lib/engine/sequence';
 
 export function makeStats(overrides: Partial<ImageStats> = {}): ImageStats {
@@ -31,6 +31,64 @@ export function makePhoto(overrides: Partial<SequencePhoto> = {}): SequencePhoto
       .padStart(16, '0'),
     faces: [],
     stats: makeStats(),
+    ...overrides,
+  };
+}
+
+let recordCounter = 0;
+
+/** A stored photo row, ready to feed buildTimeline. */
+export function makePhotoRecord(overrides: Partial<PhotoRecord> = {}): PhotoRecord {
+  recordCounter++;
+  const id = overrides.id ?? `rec-${recordCounter}`;
+  return {
+    id,
+    reelId: 'reel-1',
+    hash: id,
+    fileName: `${id}.jpg`,
+    mimeType: 'image/jpeg',
+    bytes: 1,
+    width: 2000,
+    height: 3000,
+    addedAt: 0,
+    order: recordCounter,
+    exif: {},
+    correctionEnabled: false,
+    hasCorrected: false,
+    included: true,
+    restrictedFlags: [],
+    status: 'ready',
+    analysis: {
+      stats: makeStats(),
+      faces: [],
+      // Distinct hashes so records aren't treated as near-duplicates.
+      phash: (BigInt(recordCounter) * 0x9e3779b97f4a7c15n & 0xffffffffffffffffn)
+        .toString(16)
+        .padStart(16, '0'),
+      classification: { label: 'pro', confidence: 0.9, reasons: [] },
+      score: 0.6,
+      analyzedAt: 0,
+      version: 2,
+    },
+    ...overrides,
+  };
+}
+
+export function makeReelRecord(overrides: Partial<ReelRecord> = {}): ReelRecord {
+  return {
+    id: 'reel-1',
+    name: 'Test reel',
+    createdAt: 0,
+    updatedAt: 0,
+    status: 'ready',
+    templateId: 'signature-energy',
+    durationSec: 9,
+    text: { title: '', caption: '', cta: '', showHandle: false },
+    musicAssetKey: null,
+    musicName: null,
+    versions: [],
+    activeVersionId: null,
+    manualOrder: null,
     ...overrides,
   };
 }

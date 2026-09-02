@@ -1,9 +1,9 @@
 import { useLiveQuery } from 'dexie-react-hooks';
 import { Link, useNavigate } from 'react-router-dom';
-import { db, blobKey } from '../lib/db';
+import { db, blobKey, exportExtension } from '../lib/db';
 import { deleteReelCompletely, duplicateReel } from '../lib/reels';
 import { TEMPLATES } from '../lib/engine/templates';
-import { useBlobUrl } from '../components/hooks';
+import { useBlobMimeType, useBlobUrl } from '../components/hooks';
 import { useToasts } from '../components/toast';
 import type { ReelRecord } from '../lib/types';
 
@@ -15,12 +15,18 @@ function ReelCard({ reel }: { reel: ReelRecord }) {
     [reel.id],
   );
   const thumbUrl = useBlobUrl(firstPhoto ? blobKey.thumb(firstPhoto.id) : null);
-  const template = TEMPLATES.find((t) => t.id === reel.templateId);
+  const activeVersion = reel.versions.find((v) => v.id === reel.activeVersionId);
+  // The style shown is the one this reel actually plays, which is the active
+  // version's — reel.templateId is only what the picker last had selected.
+  const template = TEMPLATES.find(
+    (t) => t.id === (activeVersion?.timeline.templateId ?? reel.templateId),
+  );
   const exportKey =
     reel.status === 'exported' && reel.activeVersionId
       ? blobKey.export(reel.id, reel.activeVersionId)
       : null;
   const exportUrl = useBlobUrl(exportKey);
+  const exportType = useBlobMimeType(exportKey);
 
   const destination =
     reel.status === 'draft' && !reel.templateId
@@ -55,7 +61,7 @@ function ReelCard({ reel }: { reel: ReelRecord }) {
             <a
               className="btn btn-secondary btn-sm"
               href={exportUrl}
-              download={`${reel.name.replace(/[^\w\- ]+/g, '')}.mp4`}
+              download={`${reel.name.replace(/[^\w\- ]+/g, '')}.${exportExtension(exportType)}`}
             >
               Download
             </a>

@@ -50,22 +50,40 @@ export interface FlagLike {
 export interface PhotoFlagView {
   included: boolean;
   restrictedFlags: FlagLike[];
+  /**
+   * Faces were found but could not be checked against the restricted
+   * profiles (the recognition model was unavailable). Unknown is not safe.
+   */
+  unscreened?: boolean;
 }
 
-/** A reel may export only when no included photo has an unreviewed or blocked flag. */
+/**
+ * A reel may export only when every included photo has actually been checked
+ * and nothing is left unreviewed or blocked. A photo the app could not screen
+ * counts against export exactly like one awaiting review — the whole point of
+ * this feature is that silence never reads as approval.
+ */
 export function exportBlockers(photos: PhotoFlagView[]): {
   pendingReview: number;
   blocked: number;
+  unscreened: number;
   ok: boolean;
 } {
   let pendingReview = 0;
   let blocked = 0;
+  let unscreened = 0;
   for (const p of photos) {
     if (!p.included) continue;
+    if (p.unscreened) unscreened++;
     for (const f of p.restrictedFlags) {
       if (f.status === 'pending') pendingReview++;
       if (f.status === 'blocked') blocked++;
     }
   }
-  return { pendingReview, blocked, ok: pendingReview === 0 && blocked === 0 };
+  return {
+    pendingReview,
+    blocked,
+    unscreened,
+    ok: pendingReview === 0 && blocked === 0 && unscreened === 0,
+  };
 }

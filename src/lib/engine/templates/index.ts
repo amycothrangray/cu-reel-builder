@@ -75,6 +75,45 @@ export function estimateDurationSec(
   return null;
 }
 
+/**
+ * The shortest reel that can hold this many photos AT ALL, at the style's
+ * hard floor. This is the number to offer when photos she added didn't fit:
+ * it is the length that makes room for every one of them, even if the result
+ * runs faster than the style's promised pace.
+ */
+export function lengthThatFitsSec(
+  template: TemplateDefinition,
+  photoCount: number,
+  maxSec = 60,
+): number | null {
+  const n = Math.max(1, photoCount);
+  for (let sec = 5; sec <= maxSec; sec++) {
+    if (templateCapacity(template, sec * 1000) >= n) return sec;
+  }
+  return null;
+}
+
+/**
+ * The calmest style that can still hold this many photos in a reel of this
+ * length — the honest answer to "which style would fit them all?". Prefers a
+ * style that fits them at its promised pace; falls back to the roomiest one.
+ */
+export function styleThatFits(
+  photoCount: number,
+  durationMs: number,
+  exclude?: TemplateId,
+): TemplateDefinition | null {
+  const options = TEMPLATES.filter((t) => t.id !== exclude);
+  const comfortable = options
+    .filter((t) => templateComfortableCapacity(t, durationMs) >= photoCount)
+    .sort((a, b) => b.comfortableSlideMs - a.comfortableSlideMs);
+  if (comfortable.length > 0) return comfortable[0];
+  const anyFit = options
+    .filter((t) => templateCapacity(t, durationMs) >= photoCount)
+    .sort((a, b) => b.comfortableSlideMs - a.comfortableSlideMs);
+  return anyFit[0] ?? null;
+}
+
 /** How this many photos actually paces in a reel of this length. */
 export function pacingFor(
   template: TemplateDefinition,

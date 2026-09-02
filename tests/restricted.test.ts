@@ -65,4 +65,18 @@ describe('restricted-image export blocking', () => {
     const result = exportBlockers([photo(true, ['safe'])]);
     expect(result.ok).toBe(true);
   });
+
+  it('blocks export when a photo could not be checked at all', () => {
+    // No flags — but only because the recognition model never ran. Silence
+    // from a check that did not happen must not read as approval.
+    const result = exportBlockers([{ included: true, restrictedFlags: [], unscreened: true }]);
+    expect(result.ok).toBe(false);
+    expect(result.unscreened).toBe(1);
+    expect(result.pendingReview).toBe(0);
+  });
+
+  it('an unchecked photo she took out of the reel does not block export', () => {
+    const result = exportBlockers([{ included: false, restrictedFlags: [], unscreened: true }]);
+    expect(result.ok).toBe(true);
+  });
 });

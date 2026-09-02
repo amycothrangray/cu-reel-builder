@@ -162,7 +162,13 @@ function selectPhotos(
   const target = editorialTarget(photos, prep, traits, ctx);
   const { profiles, identities } = prep;
 
-  const picked: SequencePhoto[] = photos.filter((p) => p.required);
+  // Required photos are honored past the comfortable pace, but physics is
+  // physics: more slots than the duration can hold produces clip windows that
+  // run off the front of the reel. Keep as many as genuinely fit, in her
+  // order; planSequence reports the overflow so the editor can say so.
+  const picked: SequencePhoto[] = photos
+    .filter((p) => p.required)
+    .slice(0, Math.max(0, ctx.capacity));
   const pickedIds = new Set(picked.map((p) => p.id));
   const coveredIdentities = new Set(picked.flatMap((p) => profiles.get(p.id)?.identities ?? []));
 

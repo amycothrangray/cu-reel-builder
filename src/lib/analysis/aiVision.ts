@@ -7,6 +7,8 @@ import { scaleToCanvas, canvasToBlob } from '../imaging/decode';
 import type { AiInsight, PhotoRecord } from '../types';
 
 const AI_EDGE = 512;
+/** Matches MAX_IMAGES in netlify/functions/analyze-photos.mts. */
+const AI_BATCH = 16;
 
 interface WireJudgment {
   id: string;
@@ -30,7 +32,19 @@ export const resetAiAvailability = (): void => {
 export async function enrichWithAi(reelId: string): Promise<boolean> {
   if (aiKnownUnavailable) return false;
   const photos = await db.photos.where('reelId').equals(reelId).toArray();
-  const pending = photos.filter((p) => p.status === 'ready' && p.analysis && !p.analysis.ai);
+  const pending = photos.filter(
+    (p) =>
+      p.status === 'ready' &&
+      p.analysis &&
+      !p.analysis.ai &&
+      // A photo that may show a restricted child, or that we could not check,
+      // never leaves this device — not even as a downscaled preview, and not
+      // before a person has reviewed it.
+      !p.unscreened &&
+      !p.restrictedFlags.some((f) => f.status === 'pending' || f.status === 'blocked') &&
+      // Nor does one she has taken out of the reel.
+      p.included,
+  );
   if (pending.length === 0) return false;
 
   const payload: { id: string; data: string }[] = [];
@@ -49,19 +63,38 @@ export async function enrichWithAi(reelId: string): Promise<boolean> {
   }
   if (payload.length === 0) return false;
 
+  // The function only reads the first AI_BATCH images per request, so send in
+  // batches — a 40-photo session used to get insight for its first 16 and
+  // nothing else, which quietly made big sets worse-edited than small ones.
+  let applied = false;
+  for (let i = 0; i < payload.length; i += AI_BATCH) {
+    const batch = payload.slice(i, i + AI_BATCH);
+    const ok = await sendBatch(batch, pending);
+    if (ok === 'disabled') return applied;
+    if (ok === 'applied') applied = true;
+  }
+  return applied;
+}
+
+type BatchOutcome = 'applied' | 'empty' | 'disabled';
+
+async function sendBatch(
+  batch: { id: string; data: string }[],
+  pending: PhotoRecord[],
+): Promise<BatchOutcome> {
   try {
     const res = await fetch('/api/analyze-photos', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ images: payload }),
+      body: JSON.stringify({ images: batch }),
     });
-    if (!res.ok) return false;
+    if (!res.ok) return 'empty';
     const data = (await res.json()) as { enabled: boolean; results: WireJudgment[] };
     if (!data.enabled) {
       aiKnownUnavailable = true;
-      return false;
+      return 'disabled';
     }
-    await trackUsage('ai-call', `${payload.length} photos`);
+    await trackUsage('ai-call', `${batch.length} photos`);
     let applied = false;
     for (const judgment of data.results ?? []) {
       const photo = pending.find((p) => p.id === judgment.id);
@@ -77,9 +110,9 @@ export async function enrichWithAi(reelId: string): Promise<boolean> {
       await db.analysisCache.put({ hash: photo.hash, analysis });
       applied = true;
     }
-    return applied;
+    return applied ? 'applied' : 'empty';
   } catch {
-    return false;
+    return 'empty';
   }
 }
 

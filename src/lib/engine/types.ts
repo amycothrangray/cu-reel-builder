@@ -96,6 +96,14 @@ export interface Timeline {
   audio: TimelineAudio | null;
   /** Seed used by the template for tie-breaking, so re-runs can differ. */
   seed: number;
+  /**
+   * Photos the user explicitly guaranteed — added to the reel, or placed by
+   * hand — that physically could not fit this length at this style's floor.
+   * A reel of 15 seconds can only hold so many photographs; when that limit
+   * bites, the editor says so and offers the two real fixes (a longer reel,
+   * or a faster style) rather than dropping her work in silence.
+   */
+  omittedPhotoIds?: string[];
 }
 
 /** Everything renderFrame needs that isn't in the timeline itself. */

@@ -55,8 +55,17 @@ export async function ingestFiles(
   };
   onProgress?.(progress);
 
-  // Load restricted references once per batch.
-  const referenceSets = await loadActiveReferenceSets().catch(() => []);
+  // Load restricted references once per batch. If profiles exist but their
+  // references cannot be read, we must not quietly screen against nothing —
+  // every photo with a face is held for review instead.
+  let referenceSets: Awaited<ReturnType<typeof loadActiveReferenceSets>> = [];
+  let screeningUnavailable = false;
+  try {
+    referenceSets = await loadActiveReferenceSets();
+  } catch (err) {
+    console.error('Could not read restricted-child references:', err);
+    screeningUnavailable = (await db.restrictedProfiles.filter((p) => !p.disabled).count()) > 0;
+  }
 
   let index = 0;
   const queue = files.map((file, i) => ({ file, order: existingCount + i }));
@@ -66,7 +75,13 @@ export async function ingestFiles(
     while (index < queue.length) {
       const item = queue[index++];
       try {
-        const id = await ingestOne(reelId, item.file, item.order, referenceSets);
+        const id = await ingestOne(
+          reelId,
+          item.file,
+          item.order,
+          referenceSets,
+          screeningUnavailable,
+        );
         if (id) ingestedIds.push(id);
       } catch (err) {
         progress.failed++;
@@ -87,6 +102,7 @@ async function ingestOne(
   file: File,
   order: number,
   referenceSets: Awaited<ReturnType<typeof loadActiveReferenceSets>>,
+  screeningUnavailable = false,
 ): Promise<string | null> {
   const id = uid();
   const record: PhotoRecord = {
@@ -143,7 +159,10 @@ async function ingestOne(
     const cached = await db.analysisCache.get(record.hash);
     let analysis: PhotoAnalysis;
 
-    if (cached && cached.analysis.version === ANALYSIS_VERSION) {
+    // A cached analysis whose face scan failed is not an answer — redo it, or
+    // the one bad moment (model still loading, offline) would follow these
+    // exact bytes into every future reel.
+    if (cached && cached.analysis.version === ANALYSIS_VERSION && !cached.analysis.screeningIncomplete) {
       analysis = cached.analysis;
     } else {
       // Measure on an analysis-sized copy to keep pixel passes fast.
@@ -164,20 +183,24 @@ async function ingestOne(
       });
       // One detection pass serves crop planning, within-set identity
       // recognition AND restricted-child matching.
-      const detected = await detectWithDescriptorsSafe(previewCanvas);
+      const { detected, degraded } = await detectWithDescriptorsSafe(previewCanvas);
       const faces = detected.map((d) => d.box);
       const score = scorePhoto({ stats, faces, width: record.width, height: record.height });
       analysis = {
         stats,
         faces,
-        descriptors: detected.map((d) => Array.from(d.descriptor)),
+        // Leave descriptors off entirely when the scan was degraded, so a
+        // later re-scan can tell "not checked" from "checked, nobody there".
+        descriptors: degraded ? undefined : detected.map((d) => Array.from(d.descriptor)),
+        screeningIncomplete: degraded || undefined,
         phash,
         classification,
         score,
         analyzedAt: Date.now(),
         version: ANALYSIS_VERSION,
       };
-      await db.analysisCache.put({ hash: record.hash, analysis });
+      // Never cache a degraded scan — it would make the failure permanent.
+      if (!degraded) await db.analysisCache.put({ hash: record.hash, analysis });
     }
     record.analysis = analysis;
 
@@ -188,6 +211,12 @@ async function ingestOne(
         analysis.descriptors ?? [],
         referenceSets,
       );
+      // Profiles are active but this photo's faces could not be identified,
+      // so "no flags" here means "we don't know", not "nobody matched".
+      record.unscreened = analysis.screeningIncomplete ? true : undefined;
+    } else if (screeningUnavailable && analysis.faces.length > 0) {
+      // Profiles exist but could not be read at all this batch.
+      record.unscreened = true;
     }
 
     // 5. Restrained correction for mobile photos that need it.
@@ -212,19 +241,30 @@ async function ingestOne(
   }
 }
 
-/** Faces + descriptors, degrading gracefully to detection-only. */
+/**
+ * Faces + descriptors, degrading gracefully to detection-only.
+ *
+ * `degraded` is the important part: it means we found faces we could not
+ * identify. Crop planning is happy with boxes alone, but restricted-child
+ * screening is not — an unscreened photo must never be mistaken for a
+ * cleared one, so callers hold it for review and refuse to cache the result.
+ */
 async function detectWithDescriptorsSafe(
   canvas: HTMLCanvasElement,
-): Promise<FaceWithDescriptor[]> {
+): Promise<{ detected: FaceWithDescriptor[]; degraded: boolean }> {
   try {
-    return await detectFacesWithDescriptors(canvas);
+    return { detected: await detectFacesWithDescriptors(canvas), degraded: false };
   } catch (err) {
     console.warn('Descriptor computation unavailable, using detection only:', err);
     try {
       const boxes = await detectFaces(canvas);
-      return boxes.map((box) => ({ box, descriptor: new Float32Array(0) }));
+      return {
+        detected: boxes.map((box) => ({ box, descriptor: new Float32Array(0) })),
+        // Only a photo with faces is at risk; a landscape with none is fine.
+        degraded: boxes.length > 0,
+      };
     } catch {
-      return [];
+      return { detected: [], degraded: true };
     }
   }
 }
@@ -268,15 +308,29 @@ export async function rescanReelForRestricted(reelId: string): Promise<number> {
     // them get one fresh detection pass.
     let faces = photo.analysis?.faces ?? [];
     let descriptors = photo.analysis?.descriptors ?? [];
-    if (descriptors.length === 0 && faces.length > 0) {
+    // Re-detect when we have faces but no usable identity for them — that
+    // covers older records, and photos whose first scan failed. This is the
+    // repair path: without it a photo that failed once stays unchecked.
+    const missingDescriptors =
+      faces.length > 0 &&
+      (descriptors.length !== faces.length || descriptors.some((d) => d.length === 0));
+    let stillIncomplete = missingDescriptors;
+    if (missingDescriptors) {
       const previewBlob = await db.blobs.get(blobKey.preview(photo.id));
       if (previewBlob) {
         const bitmap = await createImageBitmap(previewBlob.blob);
         const canvas = scaleToCanvas(bitmap, 1600);
         bitmap.close();
-        const detected = await detectWithDescriptorsSafe(canvas);
+        const { detected, degraded } = await detectWithDescriptorsSafe(canvas);
         faces = detected.map((d) => d.box);
-        descriptors = detected.map((d) => Array.from(d.descriptor));
+        descriptors = degraded ? [] : detected.map((d) => Array.from(d.descriptor));
+        stillIncomplete = degraded;
+        if (!degraded && photo.analysis) {
+          // Repaired — remember it so the next reel doesn't redo the work.
+          const repaired = { ...photo.analysis, faces, descriptors, screeningIncomplete: undefined };
+          await db.photos.update(photo.id, { analysis: repaired });
+          await db.analysisCache.put({ hash: photo.hash, analysis: repaired });
+        }
       }
     }
     const fresh =
@@ -289,7 +343,10 @@ export async function rescanReelForRestricted(reelId: string): Promise<number> {
       return prior && prior.status !== 'pending' ? { ...f, status: prior.status, reviewedAt: prior.reviewedAt, reviewedBy: prior.reviewedBy } : f;
     });
     if (merged.length > 0) flagged++;
-    await db.photos.update(photo.id, { restrictedFlags: merged });
+    await db.photos.update(photo.id, {
+      restrictedFlags: merged,
+      unscreened: referenceSets.length > 0 && stillIncomplete ? true : undefined,
+    });
   }
   return flagged;
 }

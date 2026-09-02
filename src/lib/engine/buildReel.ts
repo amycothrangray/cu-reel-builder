@@ -92,14 +92,24 @@ export function buildTimeline(opts: BuildOptions): Timeline {
   let sequencePhotos = eligible.map((p) => toSequencePhoto(p, requiredIds.has(p.id)));
   let fixedOrder = false;
   if (reel.manualOrder && reel.manualOrder.length > 0) {
-    // ORDER lock: the user's explicit sequence. Photos not yet in the manual
-    // list (e.g. just uploaded) go to the end.
+    // ORDER lock: a manual order is an exact request — THESE photos, in THIS
+    // order. Photos she never put in the reel stay eligible for a future
+    // rethink, but are not pulled in behind her back just because she nudged
+    // one thumbnail. (Adding photos from the review screen appends them to
+    // this list, so newly added work still appears.)
     const orderIndex = new Map(reel.manualOrder.map((id, i) => [id, i]));
     const fallback = orderIndex.size;
-    sequencePhotos = [...sequencePhotos].sort(
-      (a, b) => (orderIndex.get(a.id) ?? fallback) - (orderIndex.get(b.id) ?? fallback),
+    const listed = sequencePhotos.filter(
+      (p) => orderIndex.has(p.id) || requiredIds.has(p.id),
     );
-    fixedOrder = true;
+    // If every photo in the list is gone (deleted or excluded), the order no
+    // longer refers to anything — fall back to letting the engine choose.
+    if (listed.length > 0) {
+      sequencePhotos = listed.sort(
+        (a, b) => (orderIndex.get(a.id) ?? fallback) - (orderIndex.get(b.id) ?? fallback),
+      );
+      fixedOrder = true;
+    }
   }
 
   // Instagram Audio: the reference drives preview and timing but is never
@@ -138,5 +148,20 @@ export function buildTimeline(opts: BuildOptions): Timeline {
   };
 
   const template = getTemplate(templateId);
-  return template.build(sequencePhotos, ctx);
+  const timeline = template.build(sequencePhotos, ctx);
+
+  // What actually made it to the screen? Compared against what the user was
+  // promised, this is the only honest source for "these three didn't fit".
+  // Checking the finished timeline (rather than the planner's intent) also
+  // catches photos lost later, e.g. burst frames trimmed by the realizer.
+  const rendered = new Set<string>();
+  for (const clip of timeline.clips) {
+    for (const layer of clip.layers) rendered.add(layer.photoId);
+  }
+  const guaranteed = fixedOrder
+    ? sequencePhotos.map((p) => p.id)
+    : sequencePhotos.filter((p) => p.required).map((p) => p.id);
+  const omittedPhotoIds = guaranteed.filter((id) => !rendered.has(id));
+
+  return omittedPhotoIds.length > 0 ? { ...timeline, omittedPhotoIds } : timeline;
 }

@@ -72,14 +72,32 @@ describe('too many photos means fewer photos, not a faster reel', () => {
     expect(photoCountOf(timeline)).toBe(40);
   });
 
-  it('photos the user explicitly added are still never dropped', () => {
-    // 12 required photos in a 9s Signature Energy reel (comfortable = 6).
-    const required = Array.from({ length: 12 }, () => makePhoto({ score: 0.4, required: true }));
+  it('photos the user explicitly added come before anything the engine wants', () => {
+    // 8 required photos in a 9s Signature Energy reel (comfortable = 6,
+    // physical = 10): past the promised pace, still inside what fits.
+    const required = Array.from({ length: 8 }, () => makePhoto({ score: 0.4, required: true }));
     const extras = Array.from({ length: 10 }, () => makePhoto({ score: 0.9 }));
     const timeline = getTemplate('signature-energy').build([...required, ...extras], ctx());
     const used = new Set(timeline.clips.flatMap((c) => c.layers.map((l) => l.photoId)));
     for (const p of required) expect(used.has(p.id)).toBe(true);
     // The engine adds nothing of its own on top of an overflowing lock.
-    expect(used.size).toBe(12);
+    expect(used.size).toBe(8);
+  });
+
+  it('honors as many added photos as physically fit, and no more', () => {
+    // 12 required photos in a 9s Signature Energy reel. Only 10 can fit at
+    // the style's 900ms floor; cramming in 12 would push clips off the front
+    // of the reel, so the engine keeps the first 10 in her order.
+    const required = Array.from({ length: 12 }, () => makePhoto({ score: 0.4, required: true }));
+    const timeline = getTemplate('signature-energy').build(required, ctx());
+    const used = new Set(timeline.clips.flatMap((c) => c.layers.map((l) => l.photoId)));
+    const physical = templateCapacity(getTemplate('signature-energy'), 9000);
+    expect(used.size).toBe(physical);
+    for (const p of required.slice(0, physical)) expect(used.has(p.id)).toBe(true);
+    // Every clip still sits inside the reel — no negative timestamps.
+    for (const clip of timeline.clips) {
+      expect(clip.startMs).toBeGreaterThanOrEqual(0);
+      expect(clip.endMs).toBeGreaterThan(clip.startMs);
+    }
   });
 });

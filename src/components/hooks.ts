@@ -1,40 +1,39 @@
 import { useEffect, useState } from 'react';
-import { getBlob } from '../lib/db';
+import { cachedBlobUrl, loadBlobUrl, type CachedBlobUrl } from '../lib/db';
 
-const urlCache = new Map<string, string>();
+// The cache itself lives with the blobs in lib/db, so deleting or replacing a
+// stored blob can drop the URL that points at it.
+export { invalidateBlobUrl } from '../lib/db';
 
-/** Object URL for a stored blob, cached for the session. */
-export function useBlobUrl(key: string | null | undefined): string | null {
-  const [url, setUrl] = useState<string | null>(key ? (urlCache.get(key) ?? null) : null);
+function useCachedBlob(key: string | null | undefined): CachedBlobUrl | null {
+  const [entry, setEntry] = useState<CachedBlobUrl | null>(key ? (cachedBlobUrl(key) ?? null) : null);
   useEffect(() => {
     if (!key) {
-      setUrl(null);
+      setEntry(null);
       return;
     }
-    const cached = urlCache.get(key);
+    const cached = cachedBlobUrl(key);
     if (cached) {
-      setUrl(cached);
+      setEntry(cached);
       return;
     }
     let alive = true;
-    void getBlob(key).then((blob) => {
-      if (!alive || !blob) return;
-      const u = URL.createObjectURL(blob);
-      urlCache.set(key, u);
-      setUrl(u);
+    void loadBlobUrl(key).then((loaded) => {
+      if (alive && loaded) setEntry(loaded);
     });
     return () => {
       alive = false;
     };
   }, [key]);
-  return url;
+  return entry;
 }
 
-/** Drop a cached object URL (call after replacing a stored blob). */
-export function invalidateBlobUrl(key: string): void {
-  const u = urlCache.get(key);
-  if (u) {
-    URL.revokeObjectURL(u);
-    urlCache.delete(key);
-  }
+/** Object URL for a stored blob, cached for the session. */
+export function useBlobUrl(key: string | null | undefined): string | null {
+  return useCachedBlob(key)?.url ?? null;
+}
+
+/** Mime type of a stored blob — shares the read with useBlobUrl. */
+export function useBlobMimeType(key: string | null | undefined): string | null {
+  return useCachedBlob(key)?.type ?? null;
 }

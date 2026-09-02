@@ -72,6 +72,13 @@ export interface PhotoAnalysis {
    * matching. Never used for demographic inference; never leaves the device.
    */
   descriptors?: number[][];
+  /**
+   * True when faces were found but the recognition model could not produce
+   * descriptors for them — so this photo was NOT screened against restricted
+   * profiles. A failed check must never look like a clean one: the photo is
+   * held for human review and the result is never cached.
+   */
+  screeningIncomplete?: boolean;
   phash: string; // 64-bit perceptual hash as hex
   classification: ClassificationResult;
   /** Composite quality score 0..1 used for auto-selection. */
@@ -120,6 +127,12 @@ export interface PhotoRecord {
   customCrop?: NRect;
   included: boolean;
   restrictedFlags: RestrictedFlag[];
+  /**
+   * Restricted profiles were active but this photo could not actually be
+   * checked against them (the recognition model was unavailable). Unknown is
+   * not the same as safe: it holds up export until a person has looked.
+   */
+  unscreened?: boolean;
   status: 'ingesting' | 'analyzing' | 'ready' | 'error';
   error?: string;
 }

@@ -17,11 +17,24 @@ import { CropModal } from '../components/CropModal';
 import { Modal } from '../components/Modal';
 import { loadResources, type LoadedResources } from '../lib/engine/resources';
 import { ReelPlayer } from '../lib/engine/preview';
-import { TEMPLATES, getTemplate, pacingFor, estimateDurationSec } from '../lib/engine/templates';
+import {
+  TEMPLATES,
+  getTemplate,
+  pacingFor,
+  estimateDurationSec,
+  lengthThatFitsSec,
+  styleThatFits,
+} from '../lib/engine/templates';
 import { useRebuildStatus } from '../lib/rebuildStatus';
 import { useBlobUrl } from '../components/hooks';
 import { useToasts } from '../components/toast';
-import { clampReelDuration, MAX_REEL_DURATION_SEC, MIN_REEL_DURATION_SEC, REEL_DURATION_PRESETS } from '../lib/types';
+import {
+  clampReelDuration,
+  correctionAllowed,
+  MAX_REEL_DURATION_SEC,
+  MIN_REEL_DURATION_SEC,
+  REEL_DURATION_PRESETS,
+} from '../lib/types';
 import type { NRect, ReelPurpose, ReelRecord, TemplateId } from '../lib/types';
 import type { Timeline } from '../lib/engine/types';
 
@@ -63,7 +76,10 @@ function StripThumb({
       onDrop={(e) => {
         e.preventDefault();
         const from = Number(e.dataTransfer.getData('text/plain'));
-        if (!Number.isNaN(from) && from !== index) onMove(from, index);
+        // The strip can be rebuilt mid-drag (a photo removed, a new take
+        // made), so only accept a position that still exists.
+        const valid = Number.isInteger(from) && from >= 0 && from < count;
+        if (valid && from !== index) onMove(from, index);
       }}
       style={{
         position: 'relative',
@@ -141,6 +157,29 @@ function StripThumb({
   );
 }
 
+/** A photo she asked for that couldn't fit this length — shown, but greyed. */
+function OmittedThumb({ photoId }: { photoId: string }) {
+  const url = useBlobUrl(blobKey.thumb(photoId));
+  return (
+    <div
+      title="Doesn’t fit at this length"
+      style={{
+        position: 'relative',
+        width: 72,
+        flexShrink: 0,
+        borderRadius: 8,
+        overflow: 'hidden',
+        aspectRatio: '9 / 16',
+        background: 'var(--paper-sunken)',
+        opacity: 0.4,
+        filter: 'grayscale(1)',
+      }}
+    >
+      {url && <img src={url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />}
+    </div>
+  );
+}
+
 export function EditorScreen() {
   const { reelId } = useParams<{ reelId: string }>();
   const navigate = useNavigate();
@@ -155,13 +194,27 @@ export function EditorScreen() {
   const [styleChooserOpen, setStyleChooserOpen] = useState(false);
   const [cropPhotoId, setCropPhotoId] = useState<string | null>(null);
   const [durationInput, setDurationInput] = useState('');
+  const [nameInput, setNameInput] = useState('');
+  const [previewError, setPreviewError] = useState<string | null>(null);
   const musicInputRef = useRef<HTMLInputElement>(null);
+  const nameInputRef = useRef<HTMLInputElement>(null);
 
-  const reel = useLiveQuery(() => (reelId ? db.reels.get(reelId) : undefined), [reelId]);
+  // The live query answers `undefined` both while it's still looking and when
+  // the reel is gone, so wrap the result to tell those two apart.
+  const reelQuery = useLiveQuery(
+    async () => ({ reel: reelId ? await db.reels.get(reelId) : undefined }),
+    [reelId],
+  );
+  const reel = reelQuery?.reel;
   // Keep the custom-length field in sync with the reel unless it's being typed in.
   useEffect(() => {
     if (reel) setDurationInput(String(reel.durationSec));
   }, [reel?.durationSec]);
+  // Same for the name: mirror the saved name back, but never mid-typing —
+  // that's what made the caret jump and swallowed letters.
+  useEffect(() => {
+    if (reel && document.activeElement !== nameInputRef.current) setNameInput(reel.name);
+  }, [reel?.name]);
   const photos = useLiveQuery(
     () => (reelId ? db.photos.where('reelId').equals(reelId).toArray() : []),
     [reelId],
@@ -185,36 +238,73 @@ export function EditorScreen() {
     return ids;
   }, [timeline]);
 
-  // (Re)create the player whenever the active timeline changes.
+  /**
+   * What the preview is actually made of. Building the player decodes every
+   * photo, and the reel row is rewritten on any edit (even a name keystroke),
+   * so rebuilding on the timeline object's identity re-decoded the whole reel
+   * for nothing. A Timeline is plain data, so its JSON describes the frames
+   * completely — order, crops, motion, words, music, length — and the photo
+   * part covers the only photo facts that change which file gets decoded.
+   */
+  const previewKey = useMemo(() => {
+    if (!timeline || !photos) return null;
+    const needed = new Set<string>();
+    for (const clip of timeline.clips) {
+      for (const layer of clip.layers) needed.add(layer.photoId);
+    }
+    const photoSignature = photos
+      .filter((p) => needed.has(p.id))
+      .map(
+        (p) =>
+          `${p.id}:${p.correctionEnabled ? 1 : 0}${p.hasCorrected ? 1 : 0}${correctionAllowed(p) ? 1 : 0}`,
+      )
+      .sort()
+      .join(',');
+    return `${JSON.stringify(timeline)}|${photoSignature}`;
+  }, [timeline, photos]);
+
+  // (Re)create the player whenever what's on screen actually changes.
   useEffect(() => {
     let disposed = false;
     let localPlayer: ReelPlayer | null = null;
     let localRes: LoadedResources | null = null;
     const canvas = canvasRef.current;
     if (!canvas || !timeline || !photos) return;
+    setPreviewError(null);
     void (async () => {
-      const brand = await getBrand();
-      const res = await loadResources(timeline as Timeline, photos, brand);
-      if (disposed) {
-        res.dispose();
-        return;
-      }
-      localRes = res;
-      localPlayer = new ReelPlayer(canvas, timeline as Timeline, res);
-      await localPlayer.loadAudio();
-      if (disposed) {
-        localPlayer.destroy();
-        return;
-      }
-      localPlayer.onTime = (t) => setElapsedMs(t);
-      localPlayer.onEnded = () => {
+      try {
+        const brand = await getBrand();
+        const res = await loadResources(timeline as Timeline, photos, brand);
+        if (disposed) {
+          res.dispose();
+          return;
+        }
+        localRes = res;
+        localPlayer = new ReelPlayer(canvas, timeline as Timeline, res);
+        await localPlayer.loadAudio();
+        if (disposed) {
+          localPlayer.destroy();
+          return;
+        }
+        localPlayer.onTime = (t) => setElapsedMs(t);
+        localPlayer.onEnded = () => {
+          setPlaying(false);
+          setEnded(true);
+        };
+        playerRef.current = localPlayer;
         setPlaying(false);
-        setEnded(true);
-      };
-      playerRef.current = localPlayer;
-      setPlaying(false);
-      setEnded(false);
-      setElapsedMs(0);
+        setEnded(false);
+        setElapsedMs(0);
+      } catch (err) {
+        // One unreadable photo used to leave a black frame and no explanation.
+        if (disposed) return;
+        setPreviewError('One of these photos wouldn’t open, so the preview stopped here.');
+        show(
+          'The preview stopped — one of these photos wouldn’t open. Your reel is safe; take that photo out under Photos, or make another edit.',
+          'error',
+          err instanceof Error ? err.message : String(err),
+        );
+      }
     })();
     return () => {
       disposed = true;
@@ -223,9 +313,30 @@ export function EditorScreen() {
       if (playerRef.current === localPlayer) playerRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [timeline, photos?.length, photos?.map((p) => `${p.correctionEnabled}${p.included}`).join('')]);
+  }, [previewKey]);
 
-  if (!reel || !photos) return null;
+  if (!reelQuery || !photos) {
+    return (
+      <div className="empty-state panel">
+        <span className="spinner" style={{ display: 'inline-block' }} />
+        <p style={{ marginTop: 12 }}>Opening your reel…</p>
+      </div>
+    );
+  }
+  if (!reel) {
+    return (
+      <div className="empty-state panel">
+        <h2>This reel isn’t here anymore</h2>
+        <p style={{ marginTop: 8 }}>
+          It was deleted, or the link points somewhere that no longer exists. Your other
+          reels are untouched.
+        </p>
+        <Link to="/" className="btn btn-primary" style={{ marginTop: 14 }}>
+          Back to my reels
+        </Link>
+      </div>
+    );
+  }
   if (!activeVersion) {
     return (
       <div className="empty-state panel">
@@ -242,10 +353,26 @@ export function EditorScreen() {
     await rebuildActiveVersion(reel.id);
   };
 
+  /**
+   * Restyle the version she is looking at. The new style has to be passed
+   * explicitly: a rebuild otherwise keeps the version's own template, which
+   * is what stops an edit from silently retemplating an older take.
+   */
+  const changeStyle = async (templateId: TemplateId) => {
+    await touchReel(reel.id, { templateId });
+    await rebuildActiveVersion(reel.id, templateId);
+  };
+
   const movePhoto = (from: number, to: number) => {
     const order = [...stripPhotoIds];
+    // Guard against a strip that changed under the drag — an out-of-range
+    // index would splice in an empty slot and save a broken order.
+    if (from < 0 || from >= order.length || to < 0 || to >= order.length || from === to) return;
     const [moved] = order.splice(from, 1);
     order.splice(to, 0, moved);
+    // manualOrder means "these photos, in this order" — it's the whole reel,
+    // not a hint. So it must be exactly what the strip shows: reordering must
+    // never quietly pull other photos into the reel.
     void patchAndRebuild({ manualOrder: order });
   };
 
@@ -263,6 +390,12 @@ export function EditorScreen() {
           : (reel.requiredIds?.length ?? 0) > 0
             ? 'New arrangement created — your added photos are all still in.'
             : 'New arrangement created — your earlier versions are saved.',
+      );
+    } catch (err) {
+      show(
+        'That new take didn’t come together. Nothing changed — your reel is exactly as it was. Try again in a moment.',
+        'error',
+        err instanceof Error ? err.message : String(err),
       );
     } finally {
       setBusy(false);
@@ -285,8 +418,11 @@ export function EditorScreen() {
   };
 
   const applyCustomDuration = () => {
-    const parsed = Number(durationInput);
-    if (!Number.isFinite(parsed)) {
+    // An empty or unreadable box means "I didn't pick a length" — not 5s.
+    // Clearing the field used to silently reset the whole reel.
+    const typed = durationInput.trim();
+    const parsed = Number(typed);
+    if (typed === '' || !Number.isFinite(parsed)) {
       setDurationInput(String(reel.durationSec));
       return;
     }
@@ -302,6 +438,26 @@ export function EditorScreen() {
     ? pacingFor(template, reel.durationSec * 1000, stripPhotoIds.length)
     : null;
 
+  // How long the reel would want to be at this style's own pace. With a manual
+  // order the reel is exactly the photos in the strip; otherwise the engine
+  // chooses from everything included, so that's the set to plan a length for.
+  const lengthPlanCount = reel.manualOrder ? stripPhotoIds.length : includedCount;
+  const naturalSec = template ? estimateDurationSec(template, lengthPlanCount) : null;
+
+  // Photos she guaranteed — added by hand, or placed in her own order — that
+  // physically could not fit this length at this style's fastest. The engine
+  // reports them instead of dropping them quietly, so the editor must say so.
+  const omittedIds = (timeline?.omittedPhotoIds ?? []).filter((id) =>
+    photos.some((p) => p.id === id),
+  );
+  const wantedCount = stripPhotoIds.length + omittedIds.length;
+  const fitsSec =
+    template && omittedIds.length > 0 ? lengthThatFitsSec(template, wantedCount) : null;
+  const fasterStyle =
+    omittedIds.length > 0
+      ? styleThatFits(wantedCount, reel.durationSec * 1000, reel.templateId ?? undefined)
+      : null;
+
   const previewStatus = rebuilding
     ? 'Updating preview…'
     : `${activeVersion.label} · up to date`;
@@ -310,8 +466,28 @@ export function EditorScreen() {
     <div>
       <div className="page-header">
         <input
-          value={reel.name}
-          onChange={(e) => void touchReel(reel.id, { name: e.target.value })}
+          ref={nameInputRef}
+          value={nameInput}
+          aria-label="Reel name"
+          // Type freely here; the name is saved when you leave the box or
+          // press Enter. Saving every keystroke went through the database and
+          // came back out of order.
+          onChange={(e) => setNameInput(e.target.value)}
+          onBlur={() => {
+            const next = nameInput.trim();
+            if (!next) {
+              setNameInput(reel.name);
+              return;
+            }
+            if (next !== reel.name) void touchReel(reel.id, { name: next });
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') e.currentTarget.blur();
+            if (e.key === 'Escape') {
+              setNameInput(reel.name);
+              e.currentTarget.blur();
+            }
+          }}
           style={{
             fontFamily: 'var(--font-display)',
             fontSize: 24,
@@ -357,25 +533,35 @@ export function EditorScreen() {
 
         {/* Preview */}
         <div>
-          <div className="reel-frame" onClick={togglePlay}>
+          <div className="reel-frame">
             <canvas ref={canvasRef} />
-            {!playing && !ended && (
+            {previewError ? (
               <div
                 style={{
                   position: 'absolute',
                   inset: 0,
                   display: 'grid',
                   placeItems: 'center',
-                  background: 'rgba(0,0,0,0.18)',
+                  alignContent: 'center',
+                  gap: 10,
+                  padding: 22,
+                  textAlign: 'center',
+                  background: 'rgba(13,12,10,0.82)',
                   color: '#fff',
-                  fontSize: 48,
-                  pointerEvents: 'none',
                 }}
               >
-                ▶
+                <div style={{ fontFamily: 'var(--font-display)', fontSize: 21 }}>
+                  Preview stopped
+                </div>
+                <div style={{ fontSize: 13, opacity: 0.85 }}>
+                  {previewError} Your reel is safe — take that photo out, or make another
+                  edit.
+                </div>
+                <Link to={`/reel/${reel.id}/review`} className="btn btn-secondary btn-sm">
+                  Check the photos
+                </Link>
               </div>
-            )}
-            {ended && (
+            ) : ended ? (
               <div
                 style={{
                   position: 'absolute',
@@ -386,7 +572,6 @@ export function EditorScreen() {
                   gap: 10,
                   background: 'rgba(13,12,10,0.72)',
                   color: '#fff',
-                  pointerEvents: 'none',
                 }}
               >
                 <div style={{ fontFamily: 'var(--font-display)', fontSize: 21 }}>
@@ -395,10 +580,30 @@ export function EditorScreen() {
                 <div style={{ fontSize: 13, opacity: 0.85 }}>
                   {stripPhotoIds.length} photos · {reel.durationSec}.0s
                 </div>
-                <div className="btn btn-secondary btn-sm" style={{ pointerEvents: 'none' }}>
+                {/* A real button: reachable by keyboard and announced. */}
+                <button className="btn btn-secondary btn-sm" onClick={togglePlay}>
                   ↺ Replay
-                </div>
+                </button>
               </div>
+            ) : (
+              // Covers the frame, so tapping the reel still plays and pauses it.
+              <button
+                onClick={togglePlay}
+                aria-label={playing ? 'Pause preview' : 'Play preview'}
+                style={{
+                  position: 'absolute',
+                  inset: 0,
+                  width: '100%',
+                  height: '100%',
+                  display: 'grid',
+                  placeItems: 'center',
+                  background: playing ? 'transparent' : 'rgba(0,0,0,0.18)',
+                  color: '#fff',
+                  fontSize: 48,
+                }}
+              >
+                {playing ? '' : '▶'}
+              </button>
             )}
           </div>
 
@@ -426,7 +631,14 @@ export function EditorScreen() {
               <button
                 key={v.id}
                 className={`btn btn-sm ${v.id === reel.activeVersionId ? 'btn-primary' : 'btn-secondary'}`}
-                onClick={() => void touchReel(reel.id, { activeVersionId: v.id })}
+                onClick={() =>
+                  // Point the style picker at the style this take was actually
+                  // built in, so the controls describe what's on screen.
+                  void touchReel(reel.id, {
+                    activeVersionId: v.id,
+                    templateId: v.timeline.templateId,
+                  })
+                }
               >
                 {v.label}
               </button>
@@ -443,7 +655,49 @@ export function EditorScreen() {
 
         {/* Controls */}
         <div className="stack-v">
-          {pacing?.rushed && template && (
+          {omittedIds.length > 0 && template && (
+            <div
+              className="panel"
+              style={{ background: 'var(--warn-soft)', borderColor: 'var(--warn)', padding: 14 }}
+            >
+              <strong style={{ fontSize: 14.5 }}>
+                {omittedIds.length === 1
+                  ? 'One of your photos didn’t fit'
+                  : `${omittedIds.length} of your photos didn’t fit`}{' '}
+                — {reel.durationSec} seconds holds {stripPhotoIds.length} at{' '}
+                {template.name}’s fastest.
+              </strong>
+              <p className="muted" style={{ fontSize: 13.5, margin: '6px 0 10px' }}>
+                {fitsSec === null && !fasterStyle
+                  ? 'They’re still in your set — nothing is lost. This many photos won’t all fit in one reel, so a second reel is the honest answer.'
+                  : 'They’re still in your set — nothing is lost. Give the reel more room, or pick a style that moves faster.'}
+              </p>
+              <div className="row wrap">
+                {fitsSec !== null && fitsSec !== reel.durationSec && (
+                  <button
+                    className="btn btn-secondary btn-sm"
+                    onClick={() => void patchAndRebuild({ durationSec: fitsSec })}
+                  >
+                    Make it {fitsSec}s
+                  </button>
+                )}
+                {fasterStyle && (
+                  <button
+                    className="btn btn-secondary btn-sm"
+                    onClick={() => {
+                      void changeStyle(fasterStyle.id);
+                    }}
+                  >
+                    Switch to {fasterStyle.name}
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* One warning at a time: when photos are being left out, that panel
+              already offers the longer reel and the faster style. */}
+          {pacing?.rushed && template && omittedIds.length === 0 && (
             <div
               className="panel"
               style={{ background: 'var(--warn-soft)', borderColor: 'var(--warn)', padding: 14 }}
@@ -469,9 +723,7 @@ export function EditorScreen() {
                 <button
                   className="btn btn-secondary btn-sm"
                   onClick={() => {
-                    void touchReel(reel.id, { templateId: 'quick-cut' }).then(() =>
-                      rebuildActiveVersion(reel.id),
-                    );
+                    void changeStyle('quick-cut');
                   }}
                 >
                   Switch to Quick Cut
@@ -479,9 +731,7 @@ export function EditorScreen() {
                 <button
                   className="btn btn-secondary btn-sm"
                   onClick={() => {
-                    void touchReel(reel.id, { templateId: 'rapid-fire' }).then(() =>
-                      rebuildActiveVersion(reel.id),
-                    );
+                    void changeStyle('rapid-fire');
                   }}
                 >
                   Switch to Rapid Fire
@@ -508,6 +758,9 @@ export function EditorScreen() {
                   }}
                 />
               ))}
+              {omittedIds.map((id) => (
+                <OmittedThumb key={id} photoId={id} />
+              ))}
               <Link
                 to={`/reel/${reel.id}/review`}
                 style={{
@@ -527,6 +780,8 @@ export function EditorScreen() {
             </div>
             <p className="faint" style={{ marginTop: 6 }}>
               Drag (or use ‹ ›) to reorder. Tap ⛶ on any photo to fix its framing.
+              {omittedIds.length > 0 &&
+                ' The greyed photos at the end don’t fit at this length yet.'}
             </p>
           </div>
 
@@ -577,9 +832,7 @@ export function EditorScreen() {
               <select
                 value={reel.templateId ?? ''}
                 onChange={(e) => {
-                  void touchReel(reel.id, { templateId: e.target.value as TemplateId }).then(() =>
-                    rebuildActiveVersion(reel.id),
-                  );
+                  void changeStyle(e.target.value as TemplateId);
                 }}
               >
                 {TEMPLATES.map((t) => (
@@ -637,30 +890,30 @@ export function EditorScreen() {
                   <span className="faint">s (custom)</span>
                 </span>
               </div>
-              {includedCount > 0 && template && (
+              {lengthPlanCount > 0 && template && (
                 <span className="hint">
                   {(() => {
-                    const natural = estimateDurationSec(template, includedCount);
-                    if (natural === null) {
-                      return `${includedCount} included photos won’t fit comfortably even at ${MAX_REEL_DURATION_SEC}s with ${template.name} — try Rapid Fire.`;
+                    const photoWord = lengthPlanCount === 1 ? 'photo' : 'photos';
+                    const these = reel.manualOrder
+                      ? `your ${lengthPlanCount} ${photoWord}`
+                      : `all ${lengthPlanCount} ${photoWord} you’ve included`;
+                    if (naturalSec === null) {
+                      return `Even at ${MAX_REEL_DURATION_SEC}s, ${template.name} can’t hold ${these} at its own pace — Rapid Fire is built for a set this big.`;
                     }
-                    if (natural === reel.durationSec) {
-                      return `${includedCount} included photos fit ${template.name}’s pace right at ${reel.durationSec}s.`;
+                    if (naturalSec === reel.durationSec) {
+                      return `At ${reel.durationSec}s, ${template.name} has room for ${these} at its own pace.`;
                     }
-                    return `${includedCount} included photos would naturally fill about ${natural}s with ${template.name}.`;
+                    return `Showing ${these} at ${template.name}’s own pace takes about ${naturalSec}s.`;
                   })()}
-                  {(() => {
-                    const natural = estimateDurationSec(template, includedCount);
-                    return natural !== null && natural !== reel.durationSec ? (
-                      <button
-                        className="btn btn-ghost btn-sm"
-                        style={{ marginLeft: 6, padding: '2px 8px', minHeight: 'auto' }}
-                        onClick={() => void patchAndRebuild({ durationSec: natural })}
-                      >
-                        Use {natural}s
-                      </button>
-                    ) : null;
-                  })()}
+                  {naturalSec !== null && naturalSec !== reel.durationSec && (
+                    <button
+                      className="btn btn-ghost btn-sm"
+                      style={{ marginLeft: 6, padding: '2px 8px', minHeight: 'auto' }}
+                      onClick={() => void patchAndRebuild({ durationSec: naturalSec })}
+                    >
+                      Use {naturalSec}s
+                    </button>
+                  )}
                 </span>
               )}
               {pacing && template && (

@@ -1,6 +1,14 @@
 // Reel lifecycle helpers.
 
-import { blobKey, db, deleteReelCompletely, getBlob, putBlob, trackUsage } from './db';
+import {
+  blobKey,
+  db,
+  deleteReelCompletely,
+  getBlob,
+  invalidateBlobUrl,
+  putBlob,
+  trackUsage,
+} from './db';
 import { uid } from './ids';
 import { defaultBrand, type BrandConfig, type ReelRecord, type ReelVersion, type TemplateId } from './types';
 import type { Timeline } from './engine/types';
@@ -132,33 +140,51 @@ async function generateVersionInner(
     seed: usedSeed,
   });
 
-  const version: ReelVersion = {
-    id: uid(),
-    label: `Version ${reel.versions.length + 1}`,
-    createdAt: Date.now(),
-    timeline,
-  };
-  await db.reels.update(reelId, {
-    versions: [...reel.versions, version],
-    activeVersionId: version.id,
-    templateId,
-    status: 'ready',
-    updatedAt: Date.now(),
+  // Building took a while, so the version list is read again here and the
+  // append happens in one transaction: another rebuild that finished in the
+  // meantime would otherwise be wiped out by the list we read at the start.
+  return db.transaction('rw', db.reels, async () => {
+    const current = await db.reels.get(reelId);
+    if (!current) throw new Error('Reel not found');
+    const version: ReelVersion = {
+      id: uid(),
+      label: `Version ${current.versions.length + 1}`,
+      createdAt: Date.now(),
+      timeline,
+    };
+    await db.reels.update(reelId, {
+      versions: [...current.versions, version],
+      activeVersionId: version.id,
+      templateId,
+      status: 'ready',
+      updatedAt: Date.now(),
+    });
+    return version;
   });
-  return version;
 }
 
 /**
  * Rebuild the active version in place after edits (text, music, duration,
- * order, template) while keeping its identity. Other versions are untouched.
+ * order) while keeping its identity. Other versions are untouched.
+ *
+ * A version is rebuilt in the style it was made in. Pass `templateId` only
+ * when the user is deliberately restyling this version — otherwise switching
+ * back to an older version and nudging any setting would silently re-cut it
+ * in whatever style the picker happens to show.
  */
-export async function rebuildActiveVersion(reelId: string): Promise<void> {
-  return trackRebuild(() => rebuildActiveVersionInner(reelId));
+export async function rebuildActiveVersion(
+  reelId: string,
+  templateId?: TemplateId,
+): Promise<void> {
+  return trackRebuild(() => rebuildActiveVersionInner(reelId, templateId));
 }
 
-async function rebuildActiveVersionInner(reelId: string): Promise<void> {
+async function rebuildActiveVersionInner(
+  reelId: string,
+  templateId?: TemplateId,
+): Promise<void> {
   const reel = await db.reels.get(reelId);
-  if (!reel || !reel.templateId) return;
+  if (!reel) return;
   const active = reel.versions.find((v) => v.id === reel.activeVersionId);
   if (!active) return;
   const photos = await db.photos.where('reelId').equals(reelId).toArray();
@@ -168,15 +194,54 @@ async function rebuildActiveVersionInner(reelId: string): Promise<void> {
     reel,
     photos,
     brand,
-    templateId: reel.templateId,
+    templateId: templateId ?? active.timeline.templateId,
     beats: music.beats,
     intensity: music.intensity,
     seed: active.timeline.seed,
   });
-  const versions = reel.versions.map((v) =>
-    v.id === active.id ? { ...v, timeline } : v,
-  );
-  await db.reels.update(reelId, { versions, updatedAt: Date.now() });
+  await commitVersionTimeline(reelId, active.id, timeline);
+}
+
+/**
+ * The patch that swaps a freshly built timeline into one version. Null means
+ * the build is stale — the version is gone, or is no longer the active one,
+ * so writing it back would resurrect an arrangement the user has left behind.
+ */
+export function versionTimelinePatch(
+  reel: ReelRecord,
+  versionId: string,
+  timeline: Timeline,
+): Partial<ReelRecord> | null {
+  if (reel.activeVersionId !== versionId) return null;
+  if (!reel.versions.some((v) => v.id === versionId)) return null;
+  const versions = reel.versions.map((v) => (v.id === versionId ? { ...v, timeline } : v));
+  // The saved export was made from the arrangement we are replacing, so the
+  // reel is no longer "Exported" — offering that download would hand the user
+  // the video they just edited away from.
+  const wasExported = reel.status === 'exported';
+  return {
+    versions,
+    ...(wasExported ? { status: 'ready' as const, exportedAt: undefined } : {}),
+  };
+}
+
+/** Write a rebuilt timeline back, dropping the export it invalidates. */
+async function commitVersionTimeline(
+  reelId: string,
+  versionId: string,
+  timeline: Timeline,
+): Promise<void> {
+  const exportKey = blobKey.export(reelId, versionId);
+  const written = await db.transaction('rw', db.reels, db.blobs, async () => {
+    const current = await db.reels.get(reelId);
+    if (!current) return false;
+    const patch = versionTimelinePatch(current, versionId, timeline);
+    if (!patch) return false;
+    await db.reels.update(reelId, { ...patch, updatedAt: Date.now() });
+    await db.blobs.delete(exportKey);
+    return true;
+  });
+  if (written) invalidateBlobUrl(exportKey);
 }
 
 /** Photo order as the given timeline plays it (stacked layers flattened). */
