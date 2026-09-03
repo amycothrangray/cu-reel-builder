@@ -240,6 +240,12 @@ export interface ReelRecord {
    * than something that stamps itself on everything. Absent means off.
    */
   branding?: boolean;
+  /**
+   * Proof mode: keep a neighbouring photo mixed into every frame so no still
+   * grabbed from the reel is a clean copy of one photograph. For proofs shown
+   * to buy — school portraits above all. Off unless asked for.
+   */
+  proofOverlap?: boolean;
   exportedAt?: number;
 }
 

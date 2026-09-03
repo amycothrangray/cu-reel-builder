@@ -76,6 +76,14 @@ session, choose the vibe, get a polished 9:16 MP4 — no video editing required.
   one-tap fixes (longer reel, or a style built for that speed). Where the two
   numbers differ, every screen quotes the comfortable one — "best with 6–10
   photos" is what the engine will actually do, not the absolute maximum.
+- **Proof mode** — for portraits shown so families will buy them. Every frame
+  keeps a neighbouring photo mixed in, so pausing the reel and taking a
+  screenshot gives a doubled image rather than a clean copy of one photograph.
+  The picture stays perfectly viewable; it just can't be lifted. Works on any
+  style and is off unless you ask for it — it's most useful on Rapid Fire,
+  which otherwise runs on hard cuts and hands out a clean frame every time.
+  This deters casual grabbing; it is not copy protection, since a screen
+  recording still works and your original files are untouched.
 - **Nothing is dropped in silence** — a 9-second reel can only hold so many
   photographs. When photos you added can't fit, the editor says exactly how
   many and why, shows them greyed at the end of the strip, and offers the two

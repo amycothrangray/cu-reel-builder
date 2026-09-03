@@ -146,6 +146,7 @@ export function buildTimeline(opts: BuildOptions): Timeline {
     seed,
     fixedOrder,
     branding: reel.branding === true,
+    proofOverlap: reel.proofOverlap === true,
   };
 
   const template = getTemplate(templateId);

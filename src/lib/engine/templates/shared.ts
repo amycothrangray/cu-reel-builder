@@ -33,6 +33,8 @@ export interface TemplateContext {
    * Opt-in per reel; the brand kit never applies itself.
    */
   branding?: boolean;
+  /** Proof mode: keep two photos mixed at all times (see Timeline). */
+  proofOverlap?: boolean;
 }
 
 /** Run the shared editorial pipeline (plan → critic → revised plan). */
@@ -336,5 +338,6 @@ export function baseTimeline(
     overlays,
     audio: ctx.audio,
     seed: ctx.seed,
+    ...(ctx.proofOverlap ? { continuousOverlap: true } : {}),
   };
 }

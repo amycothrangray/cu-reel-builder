@@ -97,6 +97,14 @@ export interface Timeline {
   /** Seed used by the template for tie-breaking, so re-runs can differ. */
   seed: number;
   /**
+   * Proof mode: never let a single photograph hold the frame alone. A
+   * neighbouring photo stays mixed in at all times, so pausing the reel and
+   * taking a screenshot yields a doubled image rather than a clean copy —
+   * for proofs (school portraits especially) that are meant to be bought,
+   * not screen-grabbed. Deterrent, not protection: see renderFrame.
+   */
+  continuousOverlap?: boolean;
+  /**
    * Photos the user explicitly guaranteed — added to the reel, or placed by
    * hand — that physically could not fit this length at this style's floor.
    * A reel of 15 seconds can only hold so many photographs; when that limit

@@ -808,6 +808,35 @@ export function EditorScreen() {
             </div>
           </div>
 
+          {/* Proof mode — opt in, per reel */}
+          <div className="panel">
+            <div className="row" style={{ justifyContent: 'space-between', alignItems: 'flex-start' }}>
+              <div>
+                <h3 style={{ marginBottom: 4 }}>Proof mode</h3>
+                <p className="faint" style={{ margin: 0, maxWidth: 340 }}>
+                  {reel.proofOverlap
+                    ? 'Photos always overlap, so no frame of this reel is a clean copy of one photo.'
+                    : 'Off — anyone can pause and screenshot a photo cleanly.'}
+                </p>
+              </div>
+              <label className="row" style={{ gap: 6, fontSize: 14, flexShrink: 0 }}>
+                <input
+                  type="checkbox"
+                  checked={reel.proofOverlap === true}
+                  onChange={(e) => void patchAndRebuild({ proofOverlap: e.target.checked })}
+                />
+                {reel.proofOverlap ? 'On' : 'Protect'}
+              </label>
+            </div>
+            {reel.proofOverlap && (
+              <p className="faint" style={{ marginTop: 12, marginBottom: 0 }}>
+                Each photo keeps the one beside it mixed in, so a screenshot comes out doubled.
+                Good for portraits families are meant to buy. It discourages grabbing — it can’t
+                stop a screen recording, and your original files are untouched.
+              </p>
+            )}
+          </div>
+
           {/* Branding — opt in, per reel */}
           <div className="panel">
             <div className="row" style={{ justifyContent: 'space-between', alignItems: 'flex-start' }}>

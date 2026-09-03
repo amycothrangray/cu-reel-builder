@@ -58,7 +58,9 @@ export function renderFrame(
     transition.kind !== 'cut' &&
     tMs < clip.startMs + transition.durationMs;
 
-  if (inTransition) {
+  if (timeline.continuousOverlap) {
+    drawOverlapped(ctx, timeline, clips, activeIdx, tMs, res);
+  } else if (inTransition) {
     const prev = clips[activeIdx - 1];
     const progress = (tMs - clip.startMs) / transition.durationMs;
     // Previous clip holds its final state under the incoming one.
@@ -84,6 +86,49 @@ export function renderFrame(
       drawOverlay(ctx, timeline, overlay, tMs, res);
     }
   }
+  ctx.restore();
+}
+
+/**
+ * Proof mode compositing: a neighbouring photograph is always mixed into the
+ * frame, so no instant of the reel is a clean copy of one photo.
+ *
+ * The incoming photo dissolves in quickly and then holds at MAX_MIX, leaving
+ * a permanent GHOST of its neighbour underneath — enough to see the picture
+ * properly, never enough to screenshot it cleanly.
+ *
+ * This deters casual screen-grabbing. It is NOT copy protection: anyone can
+ * still screen-record, and the original files are untouched.
+ */
+const GHOST = 0.17;
+const MAX_MIX = 1 - GHOST;
+/** How long the incoming photo takes to reach MAX_MIX. */
+const MIX_IN_MS = 380;
+
+function drawOverlapped(
+  ctx: CanvasRenderingContext2D,
+  timeline: Timeline,
+  clips: Clip[],
+  activeIdx: number,
+  tMs: number,
+  res: RenderResources,
+): void {
+  const clip = clips[activeIdx];
+  // Normally the photo before; for the opener there is none, so borrow the
+  // one after it — otherwise the very first frame would be a clean copy.
+  const under = clips[activeIdx - 1] ?? clips[activeIdx + 1];
+  if (!under) {
+    // A single-clip reel has nothing to mix with. Honest limit, not a crash.
+    drawClip(ctx, timeline, clip, tMs, res);
+    return;
+  }
+  drawClip(ctx, timeline, under, under.endMs - 1, res);
+
+  const span = Math.max(1, Math.min(MIX_IN_MS, clip.endMs - clip.startMs));
+  const progress = Math.min(1, Math.max(0, (tMs - clip.startMs) / span));
+  ctx.save();
+  ctx.globalAlpha = GHOST + (MAX_MIX - GHOST) * ease('ease-in-out', progress);
+  drawClip(ctx, timeline, clip, tMs, res);
   ctx.restore();
 }
 
