@@ -63,8 +63,8 @@ describe('Rapid Fire template', () => {
     expect(durations[durations.length - 1]).toBeGreaterThan(avgMiddle * 1.8);
   });
 
-  it('drops the caption but keeps the CTA', () => {
-    const t = buildRapidFire(bigSet(50), ctx(12000));
+  it('drops the caption but keeps the CTA of a branded reel', () => {
+    const t = buildRapidFire(bigSet(50), { ...ctx(12000), branding: true });
     expect(t.overlays.some((o) => o.kind === 'caption')).toBe(false);
     expect(t.overlays.some((o) => o.kind === 'cta')).toBe(true);
   });

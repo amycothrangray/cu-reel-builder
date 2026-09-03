@@ -105,7 +105,7 @@ describe('reel template timing', () => {
   });
 
   it('CTA appears in the final seconds with brand handle', () => {
-    const t = TEMPLATES[0].build(photoSet(10), ctx());
+    const t = TEMPLATES[0].build(photoSet(10), ctx({ branding: true }));
     const cta = t.overlays.find((o) => o.kind === 'cta');
     expect(cta).toBeDefined();
     expect(cta!.endMs).toBe(t.durationMs);

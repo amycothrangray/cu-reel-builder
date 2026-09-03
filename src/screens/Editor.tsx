@@ -806,22 +806,66 @@ export function EditorScreen() {
                 onBlur={(e) => void patchAndRebuild({ text: { ...reel.text, caption: e.target.value } })}
               />
             </div>
-            <div className="field">
-              <label>Call to action</label>
-              <input
-                type="text"
-                defaultValue={reel.text.cta}
-                onBlur={(e) => void patchAndRebuild({ text: { ...reel.text, cta: e.target.value } })}
-              />
+          </div>
+
+          {/* Branding — opt in, per reel */}
+          <div className="panel">
+            <div className="row" style={{ justifyContent: 'space-between', alignItems: 'flex-start' }}>
+              <div>
+                <h3 style={{ marginBottom: 4 }}>Your branding</h3>
+                <p className="faint" style={{ margin: 0, maxWidth: 340 }}>
+                  {reel.branding
+                    ? 'This reel ends with your sign-off.'
+                    : 'Off — this reel is just the photographs. Turn it on to end with your sign-off.'}
+                </p>
+              </div>
+              <label className="row" style={{ gap: 6, fontSize: 14, flexShrink: 0 }}>
+                <input
+                  type="checkbox"
+                  checked={reel.branding === true}
+                  onChange={(e) => void patchAndRebuild({ branding: e.target.checked })}
+                />
+                {reel.branding ? 'On' : 'Add it'}
+              </label>
             </div>
-            <label className="row" style={{ gap: 6, fontSize: 14 }}>
-              <input
-                type="checkbox"
-                checked={reel.text.showHandle}
-                onChange={(e) => void patchAndRebuild({ text: { ...reel.text, showHandle: e.target.checked } })}
-              />
-              Show website / Instagram handle at the end
-            </label>
+
+            {reel.branding && (
+              <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid var(--line)' }}>
+                <div className="field">
+                  <label>Call to action</label>
+                  <input
+                    type="text"
+                    placeholder="Leave empty for no call to action"
+                    defaultValue={reel.text.cta}
+                    onBlur={(e) => void patchAndRebuild({ text: { ...reel.text, cta: e.target.value } })}
+                  />
+                </div>
+                <label className="row" style={{ gap: 6, fontSize: 14 }}>
+                  <input
+                    type="checkbox"
+                    checked={reel.text.showHandle}
+                    onChange={(e) =>
+                      void patchAndRebuild({ text: { ...reel.text, showHandle: e.target.checked } })
+                    }
+                  />
+                  Show website / Instagram handle
+                </label>
+                <label className="row" style={{ gap: 6, fontSize: 14, marginTop: 6 }}>
+                  <input
+                    type="checkbox"
+                    checked={reel.text.showLogo !== false}
+                    onChange={(e) =>
+                      void patchAndRebuild({ text: { ...reel.text, showLogo: e.target.checked } })
+                    }
+                  />
+                  Show your logo
+                </label>
+                <p className="faint" style={{ marginTop: 10, marginBottom: 0 }}>
+                  Comes from your <Link to="/brand">brand kit</Link>. Your fonts are used either
+                  way — only the sign-off is optional.
+                </p>
+              </div>
+            )}
           </div>
 
           {/* Style, duration, music */}

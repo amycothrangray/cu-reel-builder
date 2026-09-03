@@ -145,6 +145,7 @@ export function buildTimeline(opts: BuildOptions): Timeline {
     audio,
     seed,
     fixedOrder,
+    branding: reel.branding === true,
   };
 
   const template = getTemplate(templateId);

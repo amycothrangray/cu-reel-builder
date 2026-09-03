@@ -31,9 +31,16 @@ session, choose the vibe, get a polished 9:16 MP4 — no video editing required.
 - **Face-safe layout** — faces are detected locally; crops never slice through
   a face, pans settle on the subject, and wide family groups fall back to a
   full-image treatment over a blurred backdrop rather than being chopped.
-- **Brand system** — upload your real logo and licensed font files (WOFF /
-  WOFF2 / OTF / TTF), set colors, default CTA, website and Instagram handle.
-  Every reel uses them automatically.
+- **Brand system, opt-in per reel** — upload your real logo and licensed font
+  files (WOFF / WOFF2 / OTF / TTF), set colors, default CTA, website and
+  Instagram handle. The kit is *saved*, not automatically applied: a reel ends
+  with your sign-off (logo, handle, call to action) only when you switch
+  branding on for that reel, because most reels are the work itself rather
+  than an advertisement. Your fonts and colours are used either way, so an
+  unbranded reel still looks like yours. Switch it on and the whole sign-off
+  appears, pre-filled from the kit; from there you can drop the logo, drop the
+  handle, or clear the call to action — an empty field means none, never a
+  silent fall back to the saved default.
 - **Music, two ways** — *Reel Studio Music*: upload tracks you're licensed to
   include and they're embedded in the MP4, with local beat/intensity analysis
   timing the cuts. *Instagram Audio*: build the reel to a song you'll add

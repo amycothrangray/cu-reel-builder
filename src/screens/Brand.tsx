@@ -53,7 +53,7 @@ function FontField({
           />
         </label>
       )}
-      <span className="hint">WOFF, WOFF2, OTF or TTF. Stored once, used on every reel.</span>
+      <span className="hint">WOFF, WOFF2, OTF or TTF. Stored once, used for the words on your reels.</span>
     </div>
   );
 }
@@ -77,7 +77,9 @@ export function BrandScreen() {
         <div>
           <h1>Brand</h1>
           <p className="muted" style={{ marginTop: 4 }}>
-            Set once — every reel uses your real logo, fonts and colors.
+            Your kit, saved here. Fonts are used for the words on your reels;
+            your logo, handle and call to action are added only to the reels
+            you switch branding on for.
           </p>
         </div>
       </div>
@@ -174,7 +176,7 @@ export function BrandScreen() {
           style={{ alignSelf: 'flex-start' }}
           onClick={async () => {
             await saveBrand(brand);
-            show('Brand saved — future reels will use it automatically.');
+            show('Brand kit saved — add it to a reel from the editor whenever you want it.');
           }}
         >
           Save brand

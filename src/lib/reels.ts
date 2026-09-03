@@ -35,7 +35,11 @@ export async function createReel(name?: string): Promise<ReelRecord> {
     status: 'draft',
     templateId: null,
     durationSec: 9,
-    text: { title: '', caption: '', cta: brand.cta, showHandle: true },
+    // The sign-off is pre-filled from the saved brand kit so that switching
+    // branding on gives her the finished ending straight away — but it stays
+    // switched off until she asks for it.
+    text: { title: '', caption: '', cta: brand.cta, showHandle: true, showLogo: true },
+    branding: false,
     musicAssetKey: null,
     musicName: null,
     versions: [],

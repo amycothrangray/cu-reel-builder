@@ -28,6 +28,11 @@ export interface TemplateContext {
   seed: number;
   /** True when the user dragged photos into a manual order — respect it. */
   fixedOrder?: boolean;
+  /**
+   * Whether to end this reel with the brand sign-off (CTA, handle, logo).
+   * Opt-in per reel; the brand kit never applies itself.
+   */
+  branding?: boolean;
 }
 
 /** Run the shared editorial pipeline (plan → critic → revised plan). */
@@ -248,8 +253,12 @@ export function buildOverlays(
     }
   }
 
-  // CTA block in the final second(s).
-  const cta = ctx.text.cta.trim() || ctx.brand.cta;
+  // The brand sign-off in the final second(s) — call to action, handle and
+  // logo. This is the part that turns a reel into an advertisement, so it
+  // appears only when she has switched branding on for this reel. There is
+  // deliberately no fallback to the saved brand CTA: clearing the field means
+  // no call to action, not "use the default one".
+  const cta = ctx.branding ? ctx.text.cta.trim() : '';
   if (cta) {
     const start = durationMs - Math.min(2000, durationMs * 0.2);
     overlays.push({
@@ -287,7 +296,7 @@ export function buildOverlays(
         uppercase: false,
       });
     }
-    if (ctx.brand.logoAssetKey) {
+    if (ctx.brand.logoAssetKey && ctx.text.showLogo !== false) {
       overlays.push({
         id: uid(),
         kind: 'logo',

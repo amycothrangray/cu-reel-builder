@@ -190,6 +190,8 @@ export interface ReelTextConfig {
   caption: string;
   cta: string;
   showHandle: boolean;
+  /** Part of the sign-off; only ever rendered when branding is switched on. */
+  showLogo?: boolean;
 }
 
 export interface ReelVersion {
@@ -231,6 +233,13 @@ export interface ReelRecord {
    */
   manualOrder: string[] | null;
   purpose?: ReelPurpose;
+  /**
+   * Whether this reel ends with the brand sign-off — logo, handle and call to
+   * action. OFF unless she turns it on: most reels are the work itself, not
+   * an advertisement, and a saved brand kit is something to reach for rather
+   * than something that stamps itself on everything. Absent means off.
+   */
+  branding?: boolean;
   exportedAt?: number;
 }
 
